@@ -8,6 +8,7 @@ import { publicEnv } from '@/lib/env'
 import { ROUTES } from '@/lib/routes'
 import { getSessionUser } from '@/lib/auth/session'
 import type { AuthFormState } from '@/lib/auth/form-state'
+import { fieldErrorsFrom } from '@/lib/forms'
 
 const emailSchema = z.string().trim().toLowerCase().email('Enter a valid email address.')
 
@@ -27,15 +28,6 @@ const signInSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, 'Enter your password.'),
 })
-
-function fieldErrorsOf(error: z.ZodError): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const issue of error.issues) {
-    const key = String(issue.path[0] ?? 'form')
-    out[key] ??= issue.message
-  }
-  return out
-}
 
 /** Absolute URL for links Supabase emails out. */
 async function absolute(path: string): Promise<string> {
@@ -59,7 +51,7 @@ export async function signUpAction(
   })
 
   if (!parsed.success) {
-    return { error: 'Check the fields below.', fieldErrors: fieldErrorsOf(parsed.error) }
+    return { error: 'Check the fields below.', fieldErrors: fieldErrorsFrom(parsed.error.issues) }
   }
 
   const supabase = await createClient()
@@ -95,7 +87,7 @@ export async function signInAction(
   })
 
   if (!parsed.success) {
-    return { error: 'Check the fields below.', fieldErrors: fieldErrorsOf(parsed.error) }
+    return { error: 'Check the fields below.', fieldErrors: fieldErrorsFrom(parsed.error.issues) }
   }
 
   const supabase = await createClient()

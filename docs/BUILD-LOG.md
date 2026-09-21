@@ -10,7 +10,7 @@ Section numbers below refer to that note.
 | 0 | Scaffold & wiring | §9 | done |
 | 1 | Data model + RLS | §10, §6 | done |
 | 2 | Auth & router gate | §4 gate 1 | done |
-| 3 | Onboarding state machine | §5 | todo |
+| 3 | Onboarding state machine | §5 | done |
 | 4 | Connections (FB + IG) | §6.1 | todo |
 | 5 | Posts & calendar | §6.2 | todo |
 | 6 | Queue & publishing | §4, §9 | todo |
@@ -158,3 +158,50 @@ Other decisions here:
 
 UI tokens are defined once in `globals.css` for light and dark and bridged into
 Tailwind, so no component hard-codes a colour.
+
+## Module 3 — onboarding (done)
+
+The saved state machine from Section 5, and the four steps from Section 4.
+
+`src/lib/onboarding/steps.ts` holds the single ordering the whole thing depends
+on. Every advance goes through `furthest()`, which picks whichever step is
+further along — so a double submit, a stale tab or a back button can never move
+a user backwards. `onboarding_completed_at` is stamped only on `done`.
+
+Pages, each guarding its own position in the order so a later step cannot be
+reached by typing its URL:
+
+- `/onboarding/module` — Personal or Business. Self (MOTiF) is not on the
+  screen *and* not in the server action's schema, so a crafted POST cannot pick
+  it either (Section 3).
+- `/onboarding/setup` — creates the workspace, the owner membership and
+  `profiles_setup` in one action. Re-running it edits rather than creating a
+  second workspace. Returning to it shows what was saved, which is what
+  "resume anywhere" should feel like.
+- `/onboarding/connect` — Section 5 rule 3, no skip. The button is disabled
+  when nothing is connected, but that is only politeness: the action re-checks
+  `hasActiveConnection` server-side, so a re-enabled button gets the same
+  refusal. The four OAuth failure branches from Section 6.1 have their copy
+  written and wired to query parameters; Module 4 supplies the real flow. The
+  blocked-account message names no workspace and no owner.
+- `/onboarding/first-draft` — rule 4. Soft, skippable, and what it writes is a
+  `draft` with no `scheduled_at` and no targets, so no queue can pick it up.
+- `/onboarding/paywall` — rule 5. Prices read from `plans` by region; the
+  region shown is a guess from the toggle or the signup country, and Section
+  7A.2 rule 3 means the payment method still decides. "Pay later" finishes
+  onboarding into unpaid mode, and unlocks nothing — publishing is behind gate
+  2, which is still shut.
+
+"Save and exit" lives in the layout header, since progress is already on the
+user row and leaving loses nothing.
+
+### Verified
+
+`npm run build` (14 routes), `npm run typecheck`, `npm run lint` all pass.
+`next start` boots, the proxy runs, and the env validator stops the request
+naming the one missing variable — which is the wiring working, not a fault.
+
+### Still blocked on
+
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` is not set, so no request can complete.
+- The migrations have still never been run against the project.

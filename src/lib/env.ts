@@ -46,6 +46,16 @@ const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),
 
+  // Comma-separated. Checked by the app's own API routes; gateway webhooks are
+  // exempt, since they arrive from the gateway and prove themselves with a
+  // signature instead.
+  ALLOWED_ORIGINS: z.string().default(''),
+
+  // The project's JWT signing secret. Supabase signs and verifies tokens with
+  // it, so the app has no reason to read it -- it is declared here only so an
+  // operator who sets it does not think the app is using it for something.
+  AUTH_JWT_SECRET: z.string().optional(),
+
   META_APP_ID: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
@@ -78,4 +88,12 @@ export function serverEnv() {
   }
   cachedServer = parsed.data
   return cachedServer
+}
+
+/** Origins permitted to call the app's own API routes. */
+export function allowedOrigins(): string[] {
+  return serverEnv()
+    .ALLOWED_ORIGINS.split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
 }
