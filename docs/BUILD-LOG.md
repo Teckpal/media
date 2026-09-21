@@ -11,7 +11,7 @@ Section numbers below refer to that note.
 | 1 | Data model + RLS | §10, §6 | done |
 | 2 | Auth & router gate | §4 gate 1 | done |
 | 3 | Onboarding state machine | §5 | done |
-| 4 | Connections (FB + IG) | §6.1 | todo |
+| 4 | Connections (FB + IG) | §6.1 | done |
 | 5 | Posts & calendar | §6.2 | todo |
 | 6 | Queue & publishing | §4, §9 | todo |
 | 7 | Billing, regions, publish gate | §7, §7A | todo |
@@ -205,3 +205,73 @@ naming the one missing variable — which is the wiring working, not a fault.
 
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` is not set, so no request can complete.
 - The migrations have still never been run against the project.
+
+## Module 4 — connections (done)
+
+Section 6.1, end to end, minus the Meta credentials.
+
+**Token vault.** `src/lib/crypto/aes.ts` is AES-256-GCM with no dependency on
+config, so it can be tested directly; `tokens.ts` wraps it with the key from the
+environment. Payloads carry a `v1.` prefix so a future key rotation can read old
+rows while re-encrypting them. Tokens are bound to their account with the AAD
+`social_account:<workspace>:<platform>:<external id>` — moving a row's
+ciphertext to another connection fails to decrypt rather than quietly
+publishing to the wrong page. 13 tests cover the round trip, tampering,
+malformed input, version refusal, wrong key and that binding.
+
+**One live claim per account** (Decision #7). `claimAccount` does not look
+first and then insert — a read followed by a write has a gap. It inserts and
+lets the partial unique index decide, so two users racing on the same account
+resolve cleanly and the loser is told the account is elsewhere without ever
+learning where. A row this workspace previously disconnected is revived instead
+of duplicated, keeping its history and its seat.
+
+**Nothing is auto-connected.** The callback stores the platform token in
+`oauth_sessions` — a new table with no RLS policy at all, reachable only with
+the service role — and sends the user to a picker with nothing ticked. Section
+7.1 bills per connected account, so claiming every Page a user administers
+would charge them for pages they never asked for. The picker re-fetches the
+list from the platform on render, so a form cannot offer an account the token
+does not cover.
+
+**CSRF.** The `state` parameter is a bare nonce; what it means (workspace,
+platform, return path) stays in an encrypted httpOnly cookie. A forged callback
+carries a nonce matching no cookie; a stolen cookie carries a nonce that cannot
+be guessed. The cookie is consumed whether or not it matched, so a replayed
+callback finds nothing. Signing a fat state parameter instead would leak the
+workspace id into Meta's logs and the browser's history for no benefit.
+
+**Disconnect** cancels that account's pending targets and pauses a post only
+when nothing publishable is left — otherwise disconnecting Instagram would
+silently stop a post that was also going to Facebook. The seat stays paid to
+the end of the cycle (§7.2), so `seat_paid_until` is untouched.
+
+**Token refresh** runs six-hourly and starts a week before expiry. Meta has no
+refresh token: a long-lived token is traded for a fresh one while the old one is
+still valid, so letting it lapse means there is nothing to trade. A refusal from
+the platform is not retried — it means access was revoked — and the connection
+drops to `needs_reconnect`, its posts pause, and a workspace-wide notification
+is queued, since whoever connected the account may have left.
+
+**Transfer requests** open a case and nothing more. `from_workspace_id` is
+filled in server-side for support and is revoked from client reads, so the page
+literally cannot tell the requester who holds the account.
+
+### Gate change
+
+`requireWorkspace` now sits alongside `requireDashboard`. Section 4 blocks the
+*dashboard* on a live connection, not the whole application — Connections,
+Billing and Settings must stay reachable in exactly the state that fails that
+check, or `/reconnect` would link into a loop and an unpaid workspace could
+never reach checkout.
+
+### Verified
+
+`build` (20 routes), `typecheck`, `lint`, and 13 passing crypto tests.
+
+### Not verified
+
+No Meta app credentials, so no OAuth round trip has been run. `META_GRAPH_VERSION`
+defaults to `v23.0` and must be confirmed in the Meta dashboard — Meta ships a
+version quarterly and retires them after about two years. The migrations still
+have not been executed.

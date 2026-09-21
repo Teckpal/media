@@ -160,7 +160,11 @@ export type SocialAccountWithTokens = SocialAccountRow & {
   refresh_token_encrypted: string | null
 }
 
-/** `from_workspace_id` is revoked from clients (Section 6.1 privacy). */
+/**
+ * What a client may read. `from_workspace_id` is absent because migration 0008
+ * revokes it: Section 6.1 says the workspace currently holding a contested
+ * account must never be revealed to the requester.
+ */
 export type AccountTransferRequestRow = {
   id: string
   platform: PlatformEnum
@@ -175,6 +179,11 @@ export type AccountTransferRequestRow = {
   resolution_note: string | null
   created_at: string
   updated_at: string
+}
+
+/** The full row, for support tooling running with the service role. */
+export type AccountTransferRequestWithHolder = AccountTransferRequestRow & {
+  from_workspace_id: string | null
 }
 
 export type PostMediaRow = {
@@ -424,6 +433,24 @@ export type WhatsappLinkRow = {
   updated_at: string
 }
 
+/**
+ * The short-lived handoff between the OAuth callback and the account picker.
+ * No RLS policy exists for it, so it is reachable only with the service role.
+ */
+export type OAuthSessionRow = {
+  id: string
+  user_id: string
+  workspace_id: string
+  platform: PlatformEnum
+  access_token_encrypted: string
+  refresh_token_encrypted: string | null
+  token_expires_at: string | null
+  granted_scopes: string[]
+  expires_at: string
+  consumed_at: string | null
+  created_at: string
+}
+
 export type AuditLogRow = {
   id: number
   workspace_id: string | null
@@ -451,7 +478,7 @@ export type Database = {
         'workspace_id' | 'platform' | 'external_account_id'
       >
       account_transfer_requests: Table<
-        AccountTransferRequestRow,
+        AccountTransferRequestWithHolder,
         'platform' | 'external_account_id' | 'to_workspace_id' | 'requested_by'
       >
       post_media: Table<PostMediaRow, 'workspace_id' | 'storage_path' | 'mime_type'>
@@ -492,6 +519,10 @@ export type Database = {
       >
       whatsapp_links: Table<WhatsappLinkRow, 'user_id' | 'phone_e164'>
       audit_log: Table<AuditLogRow, 'action'>
+      oauth_sessions: Table<
+        OAuthSessionRow,
+        'user_id' | 'workspace_id' | 'platform' | 'access_token_encrypted' | 'expires_at'
+      >
     }
     Views: Record<never, never>
     Functions: {
@@ -502,6 +533,7 @@ export type Database = {
       is_platform_admin: { Args: Record<never, never>; Returns: boolean }
       post_workspace: { Args: { p: string }; Returns: string }
       shares_workspace_with: { Args: { other: string }; Returns: boolean }
+      purge_expired_oauth_sessions: { Args: Record<never, never>; Returns: number }
     }
     Enums: {
       platform: PlatformEnum

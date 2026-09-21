@@ -8,41 +8,12 @@ import { buttonStyles } from '@/components/ui/button'
 import { guardOnboardingStep, requireVerifiedUser } from '@/lib/auth/gate'
 import { STEP_ORDER } from '@/lib/onboarding/steps'
 import { createClient } from '@/lib/supabase/server'
-import { PHASE_1_PLATFORMS, PLATFORM_LABELS } from '@/lib/constants'
+import { PLATFORM_LABELS } from '@/lib/constants'
+import { availablePlatforms } from '@/lib/platforms'
+import { connectMessage } from '@/lib/connections/messages'
 import { ROUTES } from '@/lib/routes'
 
 export const metadata: Metadata = { title: 'Connect an account' }
-
-/**
- * Section 6.1 gives each OAuth failure its own screen. Until Module 4 wires the
- * real flow, the branches arrive here as a query parameter so the copy — and in
- * particular the blocked-account wording — is settled now.
- */
-const OAUTH_MESSAGES: Record<string, { tone: 'warning' | 'danger'; title: string; body: string }> = {
-  cancelled: {
-    tone: 'warning',
-    title: 'That connection was cancelled',
-    body: 'Nothing was changed. Try again when you are ready.',
-  },
-  wrong_account_type: {
-    tone: 'warning',
-    title: 'That account type will not work',
-    body:
-      'Instagram posting needs a Business or Creator account linked to a Facebook Page. Switch it in the Instagram app under Settings, then try again.',
-  },
-  missing_permissions: {
-    tone: 'warning',
-    title: 'Some permissions were not granted',
-    body:
-      'We need permission to read your pages and publish to them. Reconnect and leave every box ticked.',
-  },
-  already_connected: {
-    tone: 'danger',
-    title: 'This account is connected to another workspace',
-    body:
-      'An account can only live in one workspace at a time. If it belongs to you, contact support to request a transfer.',
-  },
-}
 
 export default async function ConnectPage({ searchParams }: PageProps<'/onboarding/connect'>) {
   const user = await requireVerifiedUser()
@@ -62,8 +33,9 @@ export default async function ConnectPage({ searchParams }: PageProps<'/onboardi
   const connected = accounts ?? []
   const hasActive = connected.some((a) => a.status === 'active')
 
-  const errorKey = (await searchParams).error
-  const message = typeof errorKey === 'string' ? OAUTH_MESSAGES[errorKey] : undefined
+  // Same copy as the Connections page, from one place — including the blocked
+  // wording, which names no workspace and no owner (Section 6.1).
+  const message = connectMessage((await searchParams).error)
 
   return (
     <div className="space-y-6">
@@ -113,7 +85,7 @@ export default async function ConnectPage({ searchParams }: PageProps<'/onboardi
         <p className="text-sm font-medium">Add an account</p>
 
         <div className="flex flex-wrap gap-2">
-          {PHASE_1_PLATFORMS.map((platform) => (
+          {availablePlatforms().map((platform) => (
             <a
               key={platform}
               href={`/api/connect/${platform}/start`}

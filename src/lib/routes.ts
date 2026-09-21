@@ -26,6 +26,9 @@ export const ROUTES = {
   calendar: '/calendar',
   aiPlanner: '/ai-planner',
   connections: '/connections',
+  /** Where the OAuth callback lands so the user can choose which pages to add. */
+  connectSelect: '/connections/select',
+  connectTransfer: '/connections/transfer',
   team: '/team',
   billing: '/billing',
   settings: '/settings',

@@ -12,7 +12,7 @@ import {
 import { Wordmark } from '@/components/brand/wordmark'
 import { Button } from '@/components/ui/button'
 import { ROUTES } from '@/lib/routes'
-import { requireDashboard } from '@/lib/auth/gate'
+import { requireWorkspace } from '@/lib/auth/gate'
 import { signOutAction } from '@/lib/auth/actions'
 
 const NAV = [
@@ -27,15 +27,20 @@ const NAV = [
 ]
 
 /**
- * Everything under this layout is behind gate 1 of Section 4. `requireDashboard`
- * either returns a user who has a verified email, finished onboarding and at
- * least one live connection, or it redirects and never returns.
+ * The shell for the signed-in application.
  *
- * It runs on the server on every render of every page in the group, so there is
- * no route in here that can be reached by guessing its URL.
+ * `requireWorkspace` enforces most of gate 1 from Section 4 — signed in, email
+ * verified, onboarding finished, a workspace to be in — but stops short of
+ * requiring a live connection. That last check belongs to the dashboard and the
+ * pages that assume a working workspace, and each of those calls
+ * `requireDashboard` itself. Connections, Billing and Settings must stay
+ * reachable in precisely the state that fails it.
+ *
+ * This runs on the server on every render of every page in the group, so no
+ * route in here can be reached by guessing its URL.
  */
 export default async function AppLayout({ children }: LayoutProps<'/'>) {
-  const { user, active } = await requireDashboard()
+  const { user, active } = await requireWorkspace()
 
   return (
     <div className="flex min-h-dvh flex-col lg:flex-row">

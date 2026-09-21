@@ -59,6 +59,10 @@ const serverSchema = z.object({
   META_APP_ID: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  // Meta ships a Graph API version roughly quarterly and retires old ones after
+  // about two years. Pinned here so an upgrade is a config change; confirm the
+  // current version in the Meta app dashboard before going live.
+  META_GRAPH_VERSION: z.string().default('v23.0'),
 
   SSLCOMMERZ_STORE_ID: z.string().optional(),
   SSLCOMMERZ_STORE_PASSWORD: z.string().optional(),

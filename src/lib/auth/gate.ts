@@ -87,7 +87,10 @@ export async function hasActiveConnection(workspaceId: string): Promise<boolean>
 }
 
 /**
- * The gate as used by a layout or page: passes, or redirects and never returns.
+ * The full gate: passes, or redirects and never returns.
+ *
+ * For the dashboard and everything that assumes a working workspace — posts,
+ * the calendar, the planner.
  */
 export async function requireDashboard(): Promise<{
   user: SessionUser
@@ -96,6 +99,39 @@ export async function requireDashboard(): Promise<{
   const verdict = await evaluateGate()
   if (verdict.kind !== 'ok') redirect(verdict.redirectTo)
   return { user: verdict.user, active: verdict.active }
+}
+
+/**
+ * The gate without the connection requirement.
+ *
+ * Section 4 blocks the *dashboard* on having a live connection — not the whole
+ * application. Connections, Billing and Settings have to stay reachable in
+ * exactly the state that fails that check, or the reconnect screen would link
+ * into a loop and an unpaid workspace could never reach checkout.
+ *
+ * Everything earlier in the order still applies: signed in, verified, finished
+ * onboarding, member of a workspace.
+ */
+export async function requireWorkspace(): Promise<{
+  user: SessionUser
+  active: ActiveWorkspace
+}> {
+  const verdict = await evaluateGate()
+
+  if (verdict.kind === 'ok') {
+    return { user: verdict.user, active: verdict.active }
+  }
+
+  if (verdict.kind !== 'no_active_connection') {
+    redirect(verdict.redirectTo)
+  }
+
+  // Past every other check; only the connection is missing. Resolve the
+  // workspace directly, since `evaluateGate` stopped short of returning it.
+  const active = await getActiveWorkspace(verdict.user)
+  if (!active) redirect(ONBOARDING_ROUTE.setup)
+
+  return { user: verdict.user, active }
 }
 
 /**
