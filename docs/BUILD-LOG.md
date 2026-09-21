@@ -12,7 +12,7 @@ Section numbers below refer to that note.
 | 2 | Auth & router gate | §4 gate 1 | done |
 | 3 | Onboarding state machine | §5 | done |
 | 4 | Connections (FB + IG) | §6.1 | done |
-| 5 | Posts & calendar | §6.2 | todo |
+| 5 | Posts & calendar | §6.2 | done |
 | 6 | Queue & publishing | §4, §9 | todo |
 | 7 | Billing, regions, publish gate | §7, §7A | todo |
 | 8 | Notifications | §11 Phase 1 | todo |
@@ -275,3 +275,59 @@ No Meta app credentials, so no OAuth round trip has been run. `META_GRAPH_VERSIO
 defaults to `v23.0` and must be confirmed in the Meta dashboard — Meta ships a
 version quarterly and retires them after about two years. The migrations still
 have not been executed.
+
+## Module 5 — posts and calendar (done)
+
+Section 6.2, plus gate 2 from Section 4, which scheduling needs before Module 7
+can supply the payments that open it.
+
+**Time.** `src/lib/time.ts` is the only place UTC and workspace-local meet.
+A `datetime-local` input has no zone of its own, so "09:00" is read in the
+*workspace's* zone rather than the browser's — which is what stops a travelling
+editor shifting when the team's 9am post goes out. The tests caught a real bug
+here: `2026-13-01` rolled silently into January 2027 instead of being rejected,
+and 31 April would have done the same. Both are now refused, checked by
+comparing the constructed date against the one asked for.
+
+**Validation.** `src/lib/posts/validation.ts` is pure — no database, no network
+— so the composer and the server run the identical function and cannot disagree.
+Facebook takes text on its own; Instagram refuses to publish without an image.
+An awkward aspect ratio warns rather than blocks, because the platform accepts
+it and crops, and it is the user's picture. An unmeasured file is not judged on
+dimensions it does not have.
+
+**Gate 2** (`src/lib/billing/entitlements.ts`) refuses scheduling without an
+active subscription covering *those* accounts — not the workspace in general.
+It re-runs on resume, because a plan may have lapsed or a seat been lost while
+a post sat paused. Billing-exempt workspaces (§13 Q4) pass on a flag rather
+than on their type, so a one-off exemption needs no code change.
+
+**Media.** Bytes go from the browser straight to Supabase Storage; a 200MB video
+has no business passing through a serverless function. The bucket is private,
+so previews are signed per render — a leaked object path should not be a
+permanent view of an unpublished campaign. Storage policies read the workspace
+out of the object key's first path segment, so an object is governed the moment
+it is written, before any row exists. The server re-checks the object is really
+there before registering metadata.
+
+**Removing a published post** is the one action that looks destructive and is
+not. The confirm says "This stays live on [platform]" before the second click,
+as the note specifies.
+
+Two smaller decisions worth recording:
+
+- "Save as draft instead" is a named submit button, not an `onClick` that
+  clears state — React would not have re-rendered before the form posted, so
+  the old time would have gone with it.
+- `post_targets` idempotency keys are minted once and never regenerated, so a
+  target surviving an edit keeps the key it would publish under (§6.2, double
+  publish).
+
+### Verified
+
+`build` (23 routes), `typecheck`, `lint` clean, **41 tests passing** — 13
+crypto, 13 time, 15 validation.
+
+### Still not verified
+
+The migrations have never run, so none of this has touched a real database.
