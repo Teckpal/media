@@ -92,8 +92,8 @@ export async function completeSetupAction(
   if (!user) redirect(ROUTES.login)
   if (!user.emailVerified) redirect(ROUTES.verifyEmail)
 
-  const module = user.profile.active_module
-  if (!module || !PUBLIC_MODULES.includes(module)) {
+  const activeModule = user.profile.active_module
+  if (!activeModule || !PUBLIC_MODULES.includes(activeModule)) {
     // No module picked yet, or someone landed here out of order.
     redirect(ROUTES.onboarding.chooseModule)
   }
@@ -134,7 +134,7 @@ export async function completeSetupAction(
       .from('workspaces')
       .insert({
         name: parsed.data.name,
-        type: module,
+        type: activeModule,
         owner_id: user.id,
         timezone: parsed.data.timezone,
       })

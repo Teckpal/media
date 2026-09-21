@@ -53,17 +53,17 @@ function Submit({ editing }: { editing: boolean }) {
 }
 
 export function SetupForm({
-  module,
+  activeModule,
   defaults,
   editing,
 }: {
-  module: Module
+  activeModule: Module
   defaults: SetupDefaults
   editing: boolean
 }) {
   const [state, action] = useActionState(completeSetupAction, EMPTY_FORM_STATE)
   const errors = state.fieldErrors ?? {}
-  const isBusiness = module === 'business'
+  const isBusiness = activeModule === 'business'
 
   // The visitor's own zone, in case it is not one of the common ones.
   const timezones = useMemo(() => {

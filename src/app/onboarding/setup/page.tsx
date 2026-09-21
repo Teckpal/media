@@ -23,8 +23,8 @@ export default async function SetupPage() {
   const user = await requireVerifiedUser()
   guardOnboardingStep(user, 'setup', STEP_ORDER)
 
-  const module = user.profile.active_module
-  if (!module || !PUBLIC_MODULES.includes(module)) {
+  const activeModule = user.profile.active_module
+  if (!activeModule || !PUBLIC_MODULES.includes(activeModule)) {
     redirect(ROUTES.onboarding.chooseModule)
   }
 
@@ -55,7 +55,7 @@ export default async function SetupPage() {
     <div className="space-y-6">
       <div className="space-y-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">
-          {module === 'business' ? 'Tell us about the brand' : 'Set up your workspace'}
+          {activeModule === 'business' ? 'Tell us about the brand' : 'Set up your workspace'}
         </h1>
         <p className="text-sm text-muted-foreground">
           Only the name and timezone are required. The rest sharpens what the AI
@@ -63,7 +63,7 @@ export default async function SetupPage() {
         </p>
       </div>
 
-      <SetupForm module={module} defaults={defaults} editing={Boolean(workspaceId)} />
+      <SetupForm activeModule={activeModule} defaults={defaults} editing={Boolean(workspaceId)} />
     </div>
   )
 }
