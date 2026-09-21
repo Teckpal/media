@@ -9,7 +9,7 @@ Section numbers below refer to that note.
 |---|--------|----------|--------|
 | 0 | Scaffold & wiring | §9 | done |
 | 1 | Data model + RLS | §10, §6 | done |
-| 2 | Auth & router gate | §4 gate 1 | todo |
+| 2 | Auth & router gate | §4 gate 1 | done |
 | 3 | Onboarding state machine | §5 | todo |
 | 4 | Connections (FB + IG) | §6.1 | todo |
 | 5 | Posts & calendar | §6.2 | todo |
@@ -111,3 +111,50 @@ reason. Replace it with `npm run db:types` output once a database is reachable.
 
 Plan prices in `0009` are **placeholders**. The note fixes the billing unit and
 the currencies, not the numbers.
+
+## Module 2 — auth and the router gate (done)
+
+Gate 1 of the two in Section 4, plus the screens around it.
+
+`src/lib/auth/gate.ts` is the gate. `evaluateGate()` returns a verdict and
+`requireDashboard()` acts on it, in this order:
+
+1. not signed in -> `/login`
+2. email not verified -> `/verify-email` (Section 5, rule 2: before any OAuth)
+3. `onboarding_step` is not `done` -> the saved step (Section 5, rule 1)
+4. onboarding done but no workspace -> back to setup, rather than an empty
+   dashboard; this is also what a removed member looks like (Section 6.3)
+5. no `active` connection -> `/reconnect` (Section 6.1, last account
+   disconnected)
+6. otherwise, through
+
+It lives in the `(app)` layout, not in the proxy, and re-runs on every render of
+every page in the group. A proxy can be routed around; a check inside the page's
+own render cannot be. `needs_reconnect` deliberately does not count as active —
+a connection whose token has expired cannot publish, so letting it through would
+hand the user a calendar that fails silently.
+
+`/reconnect` sits outside the `(app)` group, because the gate protecting that
+group is what redirects to it.
+
+Other decisions here:
+
+- `getUser()` everywhere, never `getSession()`. The session comes from a cookie
+  the browser controls; `getUser()` verifies the JWT with Supabase. Every
+  downstream check is an authorisation decision, so it has to be the verified
+  one. Both it and the active workspace are wrapped in React `cache`, so the
+  layout, the gate and the page share one fetch per request.
+- Sign-in redirects to `/dashboard` as a *request*, not a destination — the gate
+  there decides where the user actually lands.
+- Sign-up never distinguishes "already registered", which would confirm an
+  address to a stranger.
+- `/auth/confirm` only ever moves onboarding forward, so an old verification
+  link clicked later cannot drag a finished user back to step one.
+- `/auth/callback` accepts `next` only when it is a single-slash internal path,
+  so an invite link cannot bounce a freshly signed-in user off-site.
+- `publicEnv()` and `serverEnv()` are both lazy: a build has no reason to hold
+  credentials, and validating at import time made `next build` fail without
+  them.
+
+UI tokens are defined once in `globals.css` for light and dark and bridged into
+Tailwind, so no component hard-codes a colour.

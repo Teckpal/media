@@ -14,11 +14,33 @@ const publicSchema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
 })
 
-export const publicEnv = publicSchema.parse({
-  NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-})
+let cachedPublic: z.infer<typeof publicSchema> | null = null
+
+/**
+ * Browser-safe configuration.
+ *
+ * Lazy, like `serverEnv`, so that merely importing a module does not throw.
+ * A build has no reason to hold real credentials -- the values are only needed
+ * when a request is actually served -- and validating at import time would make
+ * `next build` fail on a machine that has none.
+ *
+ * The `process.env.NEXT_PUBLIC_*` reads stay literal so Next can still inline
+ * them into the client bundle.
+ */
+export function publicEnv() {
+  if (cachedPublic) return cachedPublic
+  const parsed = publicSchema.safeParse({
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  })
+  if (!parsed.success) {
+    const missing = parsed.error.issues.map((i) => i.path.join('.')).join(', ')
+    throw new Error(`Invalid public environment. Check: ${missing}`)
+  }
+  cachedPublic = parsed.data
+  return cachedPublic
+}
 
 const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
@@ -44,16 +66,16 @@ const serverSchema = z.object({
   CRON_SECRET: z.string().min(1),
 })
 
-let cached: z.infer<typeof serverSchema> | null = null
+let cachedServer: z.infer<typeof serverSchema> | null = null
 
 /** Server-only secrets. Throws if called where `process.env` is not populated. */
 export function serverEnv() {
-  if (cached) return cached
+  if (cachedServer) return cachedServer
   const parsed = serverSchema.safeParse(process.env)
   if (!parsed.success) {
     const missing = parsed.error.issues.map((i) => i.path.join('.')).join(', ')
     throw new Error(`Invalid server environment. Check: ${missing}`)
   }
-  cached = parsed.data
-  return cached
+  cachedServer = parsed.data
+  return cachedServer
 }
