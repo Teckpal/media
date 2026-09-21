@@ -8,7 +8,7 @@ Section numbers below refer to that note.
 | # | Module | Note ref | Status |
 |---|--------|----------|--------|
 | 0 | Scaffold & wiring | §9 | done |
-| 1 | Data model + RLS | §10, §6 | todo |
+| 1 | Data model + RLS | §10, §6 | done |
 | 2 | Auth & router gate | §4 gate 1 | todo |
 | 3 | Onboarding state machine | §5 | todo |
 | 4 | Connections (FB + IG) | §6.1 | todo |
@@ -54,3 +54,60 @@ Defaults from §13, applied unless overridden:
 
 Middleware intentionally enforces neither gate. Both gates live in server code
 next to the data, so a request that dodges middleware still meets them.
+
+## Module 1 — data model (done)
+
+Nine migrations in `supabase/migrations`. Every table has RLS on, and a table
+with no policy for an action refuses that action to every client — that is how
+the server-only tables (`gateway_events`, `notification_deliveries`) stay
+server-only.
+
+Rules that live in the database, not just in the app, because Section 4 says a
+crafted API call must get no further than the UI — and because the publish
+worker writes with the service role, which skips RLS but not triggers:
+
+- **Post state machine** (§6.2) — `guard_post_transition` rejects any move not
+  in the table. Mirrors `POST_TRANSITIONS` in `constants.ts`.
+- **Publishing lock** (§6.2) — a post being published cannot be edited, dragged,
+  paused or deleted. Only the worker may move it to `published` or `failed`, and
+  not while changing its content.
+- **No scheduling into the past** (§6.2), with a minute of slack for clock skew.
+- **One live claim per social account** (Decision #7, §6.1) — partial unique
+  index on `(platform, external_account_id)` covering only `active` and
+  `needs_reconnect`. Disconnected and transferred rows keep the history but
+  release the claim, so reconnecting and transferring both work.
+- **Last owner cannot leave** (§6.3).
+- **Billing region freezes after the first payment** (§7A.2) — the trigger
+  blocks the service role too; a region change is a cancel-and-reissue at
+  renewal, not an UPDATE.
+- **Replayed gateway callbacks are inert** (§7.2, §7A.3) — unique
+  `(gateway, gateway_transaction_id)` on payments, unique `(gateway, event_id)`
+  on the raw event log.
+- **An AI request is metered once** (§7.2) — unique `(workspace_id, request_id)`
+  on `use` ledger rows.
+
+Two privacy rules are enforced with column grants, because RLS filters rows and
+not columns:
+
+- OAuth tokens on `social_accounts` are not readable by any browser client.
+- `account_transfer_requests.from_workspace_id` is not readable by the
+  requester — §6.1 says the holder of a contested account must never be
+  revealed.
+
+`ai_credit_balance(workspace)` sums the append-only ledger, ignoring lapsed
+grants. Monthly grants carry an expiry, top-ups do not (§13 Q2).
+
+### Not yet verified
+
+There is no Docker on this machine, so `supabase start` cannot run and the
+migrations have **not been executed against a real Postgres**. They have been
+read back carefully and four defects were fixed in review (OLD referenced in
+INSERT/DELETE trigger paths, a CASE cast, and column-level REVOKEs that
+Postgres ignores after a table-level GRANT). Treat the first successful
+`supabase db push` as the real test.
+
+`src/types/database.ts` is hand-written to match these migrations for the same
+reason. Replace it with `npm run db:types` output once a database is reachable.
+
+Plan prices in `0009` are **placeholders**. The note fixes the billing unit and
+the currencies, not the numbers.

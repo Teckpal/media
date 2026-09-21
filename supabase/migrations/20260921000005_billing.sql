@@ -1,0 +1,261 @@
+-- =============================================================================
+-- Module 1 / 0005 — plans, subscriptions, invoices, payments, gateway events
+-- Sections 7, 7A, 10.
+--
+-- Money is stored as bigint minor units (poisha for BDT, cents for USD).
+-- Floating point never touches a price.
+-- =============================================================================
+
+-- --- plans -------------------------------------------------------------------
+-- Section 7A.3: "Server reads price from DB by region + package. Never trust a
+-- price sent from the browser." This table is that source of truth.
+create table public.plans (
+  id                     uuid primary key default gen_random_uuid(),
+  code                   text not null,
+  region                 public.billing_region not null,
+  currency               public.currency not null,
+
+  display_name           text not null,
+  description            text,
+
+  -- Section 7.1: the subscription price is per connected social account.
+  price_per_seat_minor   bigint not null check (price_per_seat_minor >= 0),
+
+  -- Section 7.1: the package includes a monthly AI credit allowance.
+  ai_credits_per_month   int not null default 0 check (ai_credits_per_month >= 0),
+
+  -- Soft ceiling on connected accounts; null means no cap.
+  max_seats              int check (max_seats is null or max_seats > 0),
+  features               jsonb not null default '{}'::jsonb,
+
+  is_active              boolean not null default true,
+  sort_order             int not null default 0,
+
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now(),
+
+  -- The same package exists once per region, at that region's price.
+  unique (code, region),
+  -- Section 7A.3: currency follows the region, always.
+  constraint plans_currency_matches_region check (
+    (region = 'bd' and currency = 'BDT') or (region = 'global' and currency = 'USD')
+  )
+);
+
+create trigger plans_touch_updated_at
+  before update on public.plans
+  for each row execute function public.touch_updated_at();
+
+-- --- subscriptions -----------------------------------------------------------
+create table public.subscriptions (
+  id                    uuid primary key default gen_random_uuid(),
+  workspace_id          uuid not null references public.workspaces(id) on delete cascade,
+  plan_id               uuid not null references public.plans(id) on delete restrict,
+
+  -- Snapshotted from the workspace's locked region. Section 7A.3: seats,
+  -- pro-ration and AI top-ups all use this one currency -- never a mix.
+  region                public.billing_region not null,
+  currency              public.currency not null,
+  gateway               public.payment_gateway not null,
+
+  -- Seats = paid social accounts (Section 7.1, billing unit).
+  seats                 int not null default 1 check (seats >= 0),
+
+  status                public.subscription_status not null default 'active',
+
+  current_period_start  timestamptz not null default now(),
+  current_period_end    timestamptz not null,
+
+  -- Section 7.2: SSLCommerz is mainly one-time checkout, so renewal is an
+  -- invoice plus reminders at 7, 3 and 1 days. Tokenised auto-debit, if the
+  -- merchant account supports it, sets this true and skips the reminders.
+  auto_renew            boolean not null default false,
+
+  -- Section 7.2: three days of grace past the due date, then scheduled posts
+  -- pause and publishing locks. Drafts, data and connections are kept.
+  grace_until           timestamptz,
+
+  cancel_at_period_end  boolean not null default false,
+  cancelled_at          timestamptz,
+
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now(),
+
+  constraint subscriptions_period_ordered check (current_period_end > current_period_start)
+);
+
+-- One live subscription per workspace.
+create unique index subscriptions_one_live_per_workspace
+  on public.subscriptions (workspace_id)
+  where status in ('active', 'past_due', 'grace');
+
+create index subscriptions_workspace_idx on public.subscriptions(workspace_id);
+-- Drives the renewal-reminder cron.
+create index subscriptions_period_end_idx
+  on public.subscriptions (current_period_end)
+  where status in ('active', 'past_due', 'grace');
+
+create trigger subscriptions_touch_updated_at
+  before update on public.subscriptions
+  for each row execute function public.touch_updated_at();
+
+-- --- invoices ----------------------------------------------------------------
+create table public.invoices (
+  id                    uuid primary key default gen_random_uuid(),
+  workspace_id          uuid not null references public.workspaces(id) on delete cascade,
+  subscription_id       uuid references public.subscriptions(id) on delete set null,
+
+  -- Human-facing sequential reference.
+  number                bigint generated by default as identity,
+
+  region                public.billing_region not null,
+  currency              public.currency not null,
+
+  subtotal_minor        bigint not null default 0,
+  -- Section 7.2: BD VAT handling is still with the accountant; the column is
+  -- here so the rate can be applied without a migration.
+  tax_minor             bigint not null default 0,
+  -- Section 13 Q5: a downgrade becomes credit on the next invoice, not cash.
+  credit_applied_minor  bigint not null default 0 check (credit_applied_minor >= 0),
+  total_minor           bigint not null default 0 check (total_minor >= 0),
+
+  status                public.invoice_status not null default 'draft',
+
+  period_start          timestamptz,
+  period_end            timestamptz,
+  issued_at             timestamptz,
+  due_at                timestamptz,
+  paid_at               timestamptz,
+  voided_at             timestamptz,
+
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+
+create index invoices_workspace_idx on public.invoices(workspace_id, created_at desc);
+-- Drives both the reminder cron and the overdue sweep.
+create index invoices_due_idx
+  on public.invoices (due_at)
+  where status = 'open';
+
+create trigger invoices_touch_updated_at
+  before update on public.invoices
+  for each row execute function public.touch_updated_at();
+
+create table public.invoice_lines (
+  id                 uuid primary key default gen_random_uuid(),
+  invoice_id         uuid not null references public.invoices(id) on delete cascade,
+
+  -- 'seat'      : a connected account for a full cycle
+  -- 'proration' : Section 6.4 / 7.2, a seat or module swap mid-cycle
+  -- 'ai_topup'  : Section 7.2, a prepaid credit pack
+  -- 'credit'    : Section 13 Q5, unused value carried from a downgrade
+  -- 'tax'       : VAT, once the accountant confirms the treatment
+  kind               text not null,
+  description        text not null,
+
+  quantity           int not null default 1,
+  unit_amount_minor  bigint not null,
+  amount_minor       bigint not null,
+
+  -- Which account this seat is for, when the line is a seat or a pro-ration.
+  social_account_id  uuid references public.social_accounts(id) on delete set null,
+
+  created_at         timestamptz not null default now(),
+
+  constraint invoice_lines_kind_valid
+    check (kind in ('seat', 'proration', 'ai_topup', 'credit', 'tax', 'adjustment'))
+);
+
+create index invoice_lines_invoice_idx on public.invoice_lines(invoice_id);
+
+-- --- payments ----------------------------------------------------------------
+create table public.payments (
+  id                      uuid primary key default gen_random_uuid(),
+  workspace_id            uuid not null references public.workspaces(id) on delete cascade,
+  invoice_id              uuid references public.invoices(id) on delete set null,
+
+  gateway                 public.payment_gateway not null,
+  -- SSLCommerz tran_id, or the global gateway's transaction id.
+  gateway_transaction_id  text not null,
+
+  amount_minor            bigint not null check (amount_minor >= 0),
+  currency                public.currency not null,
+  status                  public.payment_status not null default 'pending',
+
+  -- Section 7.2: only the server-side IPN plus the gateway's validation API is
+  -- trusted. A browser redirect alone never sets this, and nothing is marked
+  -- paid until it is set.
+  validated_at            timestamptz,
+  validation_response     jsonb,
+
+  -- Section 7A.2 rule 3: the payment method is the final word on region. A BD
+  -- price only completes with a BD card or mobile wallet.
+  payment_method          text,
+  payer_country           text,
+
+  failure_reason          text,
+  created_at              timestamptz not null default now(),
+  updated_at              timestamptz not null default now(),
+
+  -- Section 7.2 and 7A.3: replayed callbacks are idempotent by transaction id.
+  unique (gateway, gateway_transaction_id)
+);
+
+create index payments_workspace_idx on public.payments(workspace_id, created_at desc);
+create index payments_invoice_idx on public.payments(invoice_id);
+
+create trigger payments_touch_updated_at
+  before update on public.payments
+  for each row execute function public.touch_updated_at();
+
+-- --- gateway_events ----------------------------------------------------------
+-- Raw webhook log. Section 7A.3: two gateways, separate endpoints, each
+-- verifying its own signature. Writing the event before acting on it makes the
+-- handler replay-safe and leaves a trail when a gateway disputes what it sent.
+create table public.gateway_events (
+  id                  uuid primary key default gen_random_uuid(),
+  gateway             public.payment_gateway not null,
+  -- The gateway's own event or transaction id.
+  event_id            text not null,
+  event_type          text,
+
+  signature_verified  boolean not null default false,
+  payload             jsonb not null,
+
+  processed_at        timestamptz,
+  processing_error    text,
+  received_at         timestamptz not null default now(),
+
+  unique (gateway, event_id)
+);
+
+create index gateway_events_unprocessed_idx
+  on public.gateway_events (received_at)
+  where processed_at is null;
+
+-- --- billing_credits ---------------------------------------------------------
+-- Section 6.4 / 13 Q5: value left over from a downgrade becomes credit applied
+-- to the next invoice, never a cash refund.
+create table public.billing_credits (
+  id                 uuid primary key default gen_random_uuid(),
+  workspace_id       uuid not null references public.workspaces(id) on delete cascade,
+  currency           public.currency not null,
+  amount_minor       bigint not null check (amount_minor > 0),
+  remaining_minor    bigint not null check (remaining_minor >= 0),
+  reason             text not null,
+  applied_invoice_id uuid references public.invoices(id) on delete set null,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+
+  constraint billing_credits_remaining_within_amount
+    check (remaining_minor <= amount_minor)
+);
+
+create index billing_credits_open_idx
+  on public.billing_credits (workspace_id)
+  where remaining_minor > 0;
+
+create trigger billing_credits_touch_updated_at
+  before update on public.billing_credits
+  for each row execute function public.touch_updated_at();
