@@ -9,7 +9,7 @@ import { renderNotificationEmail } from '@/lib/notifications/templates'
 // a provider that is briefly unhappy — so the same curve rather than a second
 // one that drifts out of step with it.
 import { backoffMs } from '@/lib/publish/policy'
-import { publicEnv } from '@/lib/env'
+import { appUrl } from '@/lib/env'
 import type { NotificationDeliveryRow } from '@/types/database'
 
 /**
@@ -158,7 +158,7 @@ async function deliver(delivery: ClaimedDelivery): Promise<DeliveryOutcome> {
     title: notification.title,
     body: notification.body,
     linkPath: notification.link_path,
-    appUrl: publicEnv().NEXT_PUBLIC_APP_URL,
+    appUrl: appUrl(),
     workspaceName: workspace?.name ?? null,
   })
 

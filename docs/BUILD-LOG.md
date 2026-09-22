@@ -16,10 +16,21 @@ Section numbers below refer to that note.
 | 6 | Queue & publishing | §4, §9 | done |
 | 7 | Billing, regions, publish gate | §7, §7A | done |
 | 8 | Notifications | §11 Phase 1 | done |
-| 9 | BD + Global landing | §7A.1 | todo |
+| 9 | BD + Global landing | §7A.1 | done |
 
-Phase 2 (AI Planner, credit ledger, approvals, Self/MOTiF, LinkedIn + YouTube,
-analytics, transfers) and Phase 3 (TikTok, X, WhatsApp control) follow Phase 1.
+Phase 1 is complete as code. Phase 2 (AI Planner, credit ledger, approvals,
+Self/MOTiF, LinkedIn + YouTube, analytics, transfers) and Phase 3 (TikTok, X,
+WhatsApp control) follow.
+
+**Before any of that, three things block launch and none of them is code:**
+
+1. The migrations have never run. Fourteen of them, written and reviewed by
+   reading only. `supabase db push` against a real Postgres is the single
+   highest-value thing left, and it needs no third-party credentials.
+2. No third-party credential exists — Meta, SSLCommerz or Resend — so no OAuth
+   round trip, no payment and no email has ever happened.
+3. Prices are placeholders, BD VAT is unconfirmed, and the legal pages have
+   not been near a lawyer.
 
 ## Decisions taken while building
 
@@ -637,3 +648,89 @@ modules that own them.
 - `notifications.read_at` and 0008's `notifications_update_own` policy are now
   vestigial. They are harmless, and removing a policy is a migration for a day
   when there is a reason to touch that file.
+
+## Module 9 — BD and Global landing (done)
+
+Section 7A.1: two front doors. The create-next-app placeholder at `/` is gone.
+
+**Two pages, one component.** The regions differ in price, in how money moves
+and in who the page is addressed to — not in what the product does. The
+structure lives in one component so the Bangladesh page cannot quietly fall a
+feature behind the other one, and the copy lives in `marketing/copy.ts` where
+all the claims can be read in one sitting.
+
+**The copy has rules, and they are tested.** No page may quote a price — §7A.3
+puts prices in the database, and a number typed into marketing copy is a number
+still there six months after the price changed. No page may name a platform
+that is not built: LinkedIn, YouTube and TikTok may be mentioned, but only
+alongside a word that places them in the future. The Global page may not imply
+a card checkout, because §13 Q6 has not chosen a provider and Module 7's global
+gateway is honestly a stub. Ten tests hold those lines.
+
+**IP suggests; it does not redirect.** A visitor whose region hint is `bd` gets
+a banner on `/` offering `/bd`, and vice versa. Sending someone somewhere they
+did not ask to go on the strength of an IP address is impossible to argue with
+when the guess is wrong, and it would make `/` an unstable thing to share. The
+toggle in the header is a plain form posting to a server action, so it works
+before JavaScript arrives — which on a landing page, often on a slow
+connection, is not a theoretical concern.
+
+**Privacy and terms are a dependency, not furniture.** Meta requires a privacy
+policy URL and data-deletion instructions before it will review an app for the
+permissions Module 4 needs. Both pages describe what the code actually does —
+the encrypted token vault, the private media bucket, the three-day grace, the
+fact that removing a published post leaves it live on the platform — so the
+terms and the software cannot quietly disagree. Both carry a banner saying they
+have not been through a lawyer, rather than leaving someone to assume they have.
+
+**`robots.ts` and `sitemap.ts`** list only what a stranger should land on, with
+both regional pages at equal priority: §7A.1 treats them as two front doors
+rather than a page and its variant.
+
+### Three things the build and the browser caught
+
+1. **A build stopped needing credentials again.** `robots.ts`, `sitemap.ts` and
+   the root layout's metadata all run during `next build`, and asking
+   `publicEnv()` for the site URL dragged the Supabase key validation into the
+   build — breaking the promise Module 0 made deliberately. `appUrl()` now
+   validates that one variable on its own.
+2. **A `try/catch` was swallowing the framework.** The landing pages read the
+   session through `isSignedIn`, which returns false rather than throwing so a
+   database hiccup cannot take the public site down. But Next signals control
+   flow with exceptions, and reading cookies during a static render throws one
+   — caught silently, it broke Next's own detection of a dynamic route. The
+   build log said so; `unstable_rethrow` fixes it. Any catch in a server
+   component needs it.
+3. **The pages were actually loaded, not just compiled.** `next start` plus
+   curl: `/` and `/bd` return 200 with the right headings, titles, canonical
+   and `hreflang` tags; the BD cookie produces the nudge banner on `/`; and —
+   usefully — with an unreachable database the pricing section degrades to
+   "our prices are not loading right now" instead of an empty grid. That is the
+   first end-to-end render this project has had.
+
+### Verified
+
+`build` (35 routes), `typecheck`, `lint` clean, **146 tests passing** — 10 new,
+all on the marketing copy's own rules. Both landing pages, both legal pages,
+`robots.txt` and `sitemap.xml` fetched from a running server.
+
+### Not verified
+
+- Nobody has looked at these pages in a browser. They were fetched and their
+  HTML inspected; the layout at phone width, in dark mode, and with real
+  prices in the grid has not been seen by a human.
+- The prices in the grid have never rendered from real data, because no
+  database has ever run. What was observed was the fallback.
+- No open-graph image. A link to either page currently previews without one,
+  which is a design task rather than a code one.
+
+### Known gaps
+
+- The landing pages render per request, because the session read and the price
+  read both need a server. For the one page a stranger loads first, that is
+  slower than it needs to be; caching the plans query is the obvious
+  improvement and was left alone rather than guessed at.
+- Copy is English on both pages. §7A.1 does not ask for Bangla, but a Bangla
+  version of `/bd` is the obvious next thing a Bangladeshi customer would want.
+- The contact addresses in the legal pages are `@motif.example` placeholders,
+  and the company name and address the terms need do not exist yet.

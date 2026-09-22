@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { gatewayForRegion } from '@/lib/billing/gateways'
 import { GatewayError } from '@/lib/billing/gateways/types'
 import { quoteSubscription, addMonthUtc, type Quote } from '@/lib/billing/pricing'
-import { publicEnv } from '@/lib/env'
+import { appUrl } from '@/lib/env'
 import { ROUTES } from '@/lib/routes'
 import type { BillingRegion } from '@/lib/constants'
 import type { CurrencyEnum, PlanRow } from '@/types/database'
@@ -293,7 +293,7 @@ export async function startCheckout(input: CheckoutInput): Promise<CheckoutOutco
     return { kind: 'activated', invoiceId: invoice.id }
   }
 
-  const appUrl = publicEnv().NEXT_PUBLIC_APP_URL.replace(/\/$/, '')
+  const base = appUrl()
 
   try {
     const session = await gateway.createCheckout({
@@ -305,10 +305,10 @@ export async function startCheckout(input: CheckoutInput): Promise<CheckoutOutco
       workspace: { id: input.workspace.id, name: input.workspace.name },
       customer: { name: input.actor.name, email: input.actor.email },
       urls: {
-        success: `${appUrl}${ROUTES.billingReturn}?state=success&ref=${transactionId}`,
-        fail: `${appUrl}${ROUTES.billingReturn}?state=fail&ref=${transactionId}`,
-        cancel: `${appUrl}${ROUTES.billingReturn}?state=cancel&ref=${transactionId}`,
-        ipn: `${appUrl}/api/webhooks/${gateway.id}/ipn`,
+        success: `${base}${ROUTES.billingReturn}?state=success&ref=${transactionId}`,
+        fail: `${base}${ROUTES.billingReturn}?state=fail&ref=${transactionId}`,
+        cancel: `${base}${ROUTES.billingReturn}?state=cancel&ref=${transactionId}`,
+        ipn: `${base}/api/webhooks/${gateway.id}/ipn`,
       },
     })
 
