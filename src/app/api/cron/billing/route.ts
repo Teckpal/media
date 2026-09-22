@@ -1,5 +1,5 @@
 import { runBillingSweep } from '@/lib/billing/dunning'
-import { isAuthorisedCron, unauthorised } from '@/lib/cron'
+import { cronResult, isAuthorisedCron, unauthorised } from '@/lib/cron'
 
 /**
  * Section 7.2's renewal cycle: raise, remind, grace, withdraw.
@@ -17,7 +17,5 @@ export const maxDuration = 60
 export async function GET(request: Request) {
   if (!isAuthorisedCron(request)) return unauthorised()
 
-  const summary = await runBillingSweep()
-
-  return Response.json({ ok: true, ...summary })
+  return cronResult(await runBillingSweep())
 }

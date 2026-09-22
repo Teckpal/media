@@ -1,5 +1,5 @@
 import { runNotificationTick } from '@/lib/notifications/dispatch'
-import { isAuthorisedCron, unauthorised } from '@/lib/cron'
+import { cronResult, isAuthorisedCron, unauthorised } from '@/lib/cron'
 
 /**
  * Section 11: the email half of notifications.
@@ -14,7 +14,5 @@ export const maxDuration = 60
 export async function GET(request: Request) {
   if (!isAuthorisedCron(request)) return unauthorised()
 
-  const summary = await runNotificationTick()
-
-  return Response.json({ ok: true, ...summary })
+  return cronResult(await runNotificationTick())
 }

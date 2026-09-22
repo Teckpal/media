@@ -1,5 +1,5 @@
 import { runPublishTick } from '@/lib/publish/worker'
-import { isAuthorisedCron, unauthorised } from '@/lib/cron'
+import { cronResult, isAuthorisedCron, unauthorised } from '@/lib/cron'
 
 /**
  * Section 9: "Queue: due posts."
@@ -17,7 +17,5 @@ export const maxDuration = 60
 export async function GET(request: Request) {
   if (!isAuthorisedCron(request)) return unauthorised()
 
-  const summary = await runPublishTick()
-
-  return Response.json({ ok: true, ...summary })
+  return cronResult(await runPublishTick())
 }

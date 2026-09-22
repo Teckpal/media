@@ -56,21 +56,39 @@ export type TickSummary = {
   failed: number
   retrying: number
   processing: number
+
+  /**
+   * Queries this tick could not run at all. Empty is the healthy case; anything
+   * in here means the counts above are not a report on the work, they are a
+   * report on what little of it we managed to ask about.
+   */
+  degraded: string[]
 }
 
 export async function runPublishTick(
   options: { limit?: number } = {},
 ): Promise<TickSummary> {
   const summary: TickSummary = {
-    reaped: await reapStuckTargets(),
+    reaped: 0,
     claimed: 0,
     published: 0,
     failed: 0,
     retrying: 0,
     processing: 0,
+    degraded: [],
   }
 
+  const reaped = await reapStuckTargets()
+  if (reaped === null) summary.degraded.push('reap_stuck_targets')
+  else summary.reaped = reaped
+
   const claimed = await claimDueTargets(options.limit ?? DEFAULT_BATCH)
+  if (claimed === null) {
+    // Nothing further is possible this tick: without a claim there is no work
+    // to do, and reporting zero published would be reporting a success.
+    summary.degraded.push('claim_due_targets')
+    return summary
+  }
   summary.claimed = claimed.length
 
   // Sequentially. Publishing is I/O-bound and parallelism would be tempting,

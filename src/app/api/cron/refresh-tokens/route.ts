@@ -1,6 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { refreshExpiringTokens } from '@/lib/connections/refresh'
-import { isAuthorisedCron, unauthorised } from '@/lib/cron'
+import { cronResult, isAuthorisedCron, unauthorised } from '@/lib/cron'
 
 /**
  * Section 9: token refresh, every few hours.
@@ -14,13 +14,14 @@ export async function GET(request: Request) {
 
   const summary = await refreshExpiringTokens()
 
-  const { data: purged } = await createAdminClient().rpc(
+  const { data: purged, error } = await createAdminClient().rpc(
     'purge_expired_oauth_sessions',
   )
 
-  return Response.json({
-    ok: true,
-    ...summary,
-    purgedOAuthSessions: purged ?? 0,
-  })
+  if (error) {
+    console.error('[refresh] purging oauth sessions failed: %s', error.message)
+    summary.degraded.push('purge_expired_oauth_sessions')
+  }
+
+  return cronResult({ ...summary, purgedOAuthSessions: purged ?? 0 })
 }

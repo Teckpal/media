@@ -39,6 +39,9 @@ export type BillingSweepSummary = {
   seatsReleased: number
   aiGrantsExpired: number
   stalePaymentsClosed: number
+
+  /** Queries this sweep could not run. See `cronResult` in `lib/cron.ts`. */
+  degraded: string[]
 }
 
 export async function runBillingSweep(now = new Date()): Promise<BillingSweepSummary> {
@@ -51,6 +54,7 @@ export async function runBillingSweep(now = new Date()): Promise<BillingSweepSum
     seatsReleased: 0,
     aiGrantsExpired: 0,
     stalePaymentsClosed: 0,
+    degraded: [],
   }
 
   await raiseRenewals(summary, now)
@@ -60,26 +64,53 @@ export async function runBillingSweep(now = new Date()): Promise<BillingSweepSum
   await releaseLapsedSeats(summary, now)
   await closeStalePayments(summary, now)
 
-  const { data: expired } = await createAdminClient().rpc('expire_lapsed_ai_grants')
-  summary.aiGrantsExpired = expired ?? 0
+  const { data: expired, error } = await createAdminClient().rpc('expire_lapsed_ai_grants')
+  if (error) {
+    console.error('[billing] expiring AI grants failed: %s', error.message)
+    summary.degraded.push('expire_lapsed_ai_grants')
+  } else {
+    summary.aiGrantsExpired = expired ?? 0
+  }
 
   return summary
 }
 
 // --- raising the next invoice ------------------------------------------------
 
+/**
+ * Reads the list a sweep step works from, and records an outage rather than
+ * letting it pass for "nothing due".
+ *
+ * Every step below starts by asking which rows need attention. A failed query
+ * and an empty result are the same value — `null` — so without this the sweep
+ * would report a calm zero on a day it raised no invoices because it could not
+ * read the table.
+ */
+function rowsOrDegrade<T>(
+  summary: BillingSweepSummary,
+  step: string,
+  result: { data: T[] | null; error: { message: string } | null },
+): T[] {
+  if (result.error) {
+    console.error('[billing] %s failed: %s', step, result.error.message)
+    summary.degraded.push(step)
+    return []
+  }
+  return result.data ?? []
+}
+
 async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<void> {
   const admin = createAdminClient()
   const horizon = new Date(now.getTime() + RENEWAL_LEAD_DAYS * DAY_MS)
 
-  const { data: due } = await admin
+  const due = rowsOrDegrade(summary, 'raiseRenewals', await admin
     .from('subscriptions')
     .select('*')
     .eq('status', 'active')
     .lt('current_period_end', horizon.toISOString())
-    .limit(200)
+    .limit(200))
 
-  for (const subscription of due ?? []) {
+  for (const subscription of due) {
     const periodStart = new Date(subscription.current_period_end)
 
     // Already raised. Matching on the period rather than on a flag, so a
@@ -168,15 +199,15 @@ async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<v
 async function sendReminders(summary: BillingSweepSummary, now: Date): Promise<void> {
   const admin = createAdminClient()
 
-  const { data: open } = await admin
+  const open = rowsOrDegrade(summary, 'sendReminders', await admin
     .from('invoices')
     .select('id, workspace_id, total_minor, currency, due_at')
     .eq('status', 'open')
     .not('due_at', 'is', null)
     .gt('due_at', now.toISOString())
-    .limit(500)
+    .limit(500))
 
-  for (const invoice of open ?? []) {
+  for (const invoice of open) {
     const daysLeft = Math.ceil((new Date(invoice.due_at!).getTime() - now.getTime()) / DAY_MS)
 
     const milestone = REMINDER_DAYS.find((day) => day === daysLeft)
@@ -228,14 +259,14 @@ async function moveOverdueToPastDue(
   //
   // What actually matters is that the paid-for period has run out and nothing
   // has been paid since.
-  const { data: lapsed } = await admin
+  const lapsed = rowsOrDegrade(summary, 'moveOverdueToPastDue', await admin
     .from('subscriptions')
     .select('id, workspace_id, current_period_end')
     .eq('status', 'active')
     .lt('current_period_end', now.toISOString())
-    .limit(200)
+    .limit(200))
 
-  for (const subscription of lapsed ?? []) {
+  for (const subscription of lapsed) {
     const { count: unpaid } = await admin
       .from('invoices')
       .select('id', { count: 'exact', head: true })
@@ -271,15 +302,15 @@ async function moveOverdueToPastDue(
 async function endGracePeriods(summary: BillingSweepSummary, now: Date): Promise<void> {
   const admin = createAdminClient()
 
-  const { data: lapsed } = await admin
+  const lapsed = rowsOrDegrade(summary, 'endGracePeriods', await admin
     .from('subscriptions')
     .select('id, workspace_id')
     .in('status', ['past_due', 'grace'])
     .not('grace_until', 'is', null)
     .lt('grace_until', now.toISOString())
-    .limit(200)
+    .limit(200))
 
-  for (const subscription of lapsed ?? []) {
+  for (const subscription of lapsed) {
     await admin
       .from('subscriptions')
       .update({ status: 'expired' })
@@ -320,15 +351,15 @@ async function releaseLapsedSeats(
   summary: BillingSweepSummary,
   now: Date,
 ): Promise<void> {
-  const { data: released } = await createAdminClient()
+  const released = rowsOrDegrade(summary, 'releaseLapsedSeats', await createAdminClient()
     .from('social_accounts')
     .update({ paid_seat: false })
     .eq('paid_seat', true)
     .not('seat_paid_until', 'is', null)
     .lt('seat_paid_until', now.toISOString())
-    .select('id')
+    .select('id'))
 
-  summary.seatsReleased = released?.length ?? 0
+  summary.seatsReleased = released.length
 }
 
 /**
@@ -344,12 +375,12 @@ async function closeStalePayments(
 ): Promise<void> {
   const cutoff = new Date(now.getTime() - PENDING_PAYMENT_TTL_HOURS * 60 * 60 * 1000)
 
-  const { data: closed } = await createAdminClient()
+  const closed = rowsOrDegrade(summary, 'closeStalePayments', await createAdminClient()
     .from('payments')
     .update({ status: 'failed', failure_reason: 'The checkout was not completed.' })
     .eq('status', 'pending')
     .lt('created_at', cutoff.toISOString())
-    .select('id')
+    .select('id'))
 
-  summary.stalePaymentsClosed = closed?.length ?? 0
+  summary.stalePaymentsClosed = closed.length
 }

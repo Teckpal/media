@@ -26,6 +26,9 @@ export type RefreshSummary = {
   refreshed: number
   needsReconnect: number
   failed: number
+
+  /** Queries this run could not make. See `cronResult` in `lib/cron.ts`. */
+  degraded: string[]
 }
 
 export async function refreshExpiringTokens(
@@ -34,7 +37,7 @@ export async function refreshExpiringTokens(
   const admin = createAdminClient()
   const horizon = new Date(now.getTime() + REFRESH_WINDOW_MS)
 
-  const { data: accounts } = await admin
+  const { data: accounts, error } = await admin
     .from('social_accounts')
     .select('*')
     .eq('status', 'active')
@@ -47,6 +50,16 @@ export async function refreshExpiringTokens(
     refreshed: 0,
     needsReconnect: 0,
     failed: 0,
+    degraded: [],
+  }
+
+  // An unreadable table is not "no tokens are expiring". Saying so would let a
+  // whole workspace's connections lapse in silence, which is the one outcome
+  // this job exists to prevent.
+  if (error) {
+    console.error('[refresh] reading expiring accounts failed: %s', error.message)
+    summary.degraded.push('social_accounts')
+    return summary
   }
 
   for (const account of accounts ?? []) {

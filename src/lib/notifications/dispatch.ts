@@ -33,6 +33,9 @@ export type DispatchSummary = {
   retrying: number
   failed: number
   exhausted: number
+
+  /** Queries this tick could not run. See `cronResult` in `lib/cron.ts`. */
+  degraded: string[]
 }
 
 export async function runNotificationTick(
@@ -40,7 +43,7 @@ export async function runNotificationTick(
 ): Promise<DispatchSummary> {
   const admin = createAdminClient()
 
-  const { data: exhausted } = await admin.rpc('fail_exhausted_deliveries', {
+  const { data: exhausted, error: exhaustError } = await admin.rpc('fail_exhausted_deliveries', {
     max_attempts: MAX_ATTEMPTS,
   })
 
@@ -51,6 +54,12 @@ export async function runNotificationTick(
     retrying: 0,
     failed: 0,
     exhausted: exhausted ?? 0,
+    degraded: [],
+  }
+
+  if (exhaustError) {
+    console.error('[notify] exhaust sweep failed: %s', exhaustError.message)
+    summary.degraded.push('fail_exhausted_deliveries')
   }
 
   const { data: claimed, error } = await admin.rpc('claim_notification_deliveries', {
@@ -60,6 +69,7 @@ export async function runNotificationTick(
 
   if (error) {
     console.error('[notify] claim failed: %s', error.message)
+    summary.degraded.push('claim_notification_deliveries')
     return summary
   }
 

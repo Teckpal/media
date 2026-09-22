@@ -30,14 +30,15 @@ export type ClaimedTarget = PostTargetRow
  * against every edit, pause and delete (Section 6.2) — so the user would be
  * left with a post they cannot touch and we are no longer working on.
  */
-export async function reapStuckTargets(): Promise<number> {
+/** `null` means the query did not run — which is not the same as "nothing to reap". */
+export async function reapStuckTargets(): Promise<number | null> {
   const { data, error } = await createAdminClient().rpc('reap_stuck_targets', {
     max_attempts: MAX_PUBLISH_ATTEMPTS,
   })
 
   if (error) {
     console.error('[publish] reap failed: %s', error.message)
-    return 0
+    return null
   }
 
   return data ?? 0
@@ -50,7 +51,12 @@ export async function reapStuckTargets(): Promise<number> {
  * 0012) using `for update ... skip locked`, so two ticks running at once take
  * disjoint batches instead of both publishing the same post.
  */
-export async function claimDueTargets(limit: number): Promise<ClaimedTarget[]> {
+/**
+ * `null` means the claim did not run. An empty array means it ran and there was
+ * nothing due — the worker has to tell those apart, because one of them is an
+ * outage and the other is a quiet minute.
+ */
+export async function claimDueTargets(limit: number): Promise<ClaimedTarget[] | null> {
   const { data, error } = await createAdminClient().rpc('claim_due_targets', {
     max_batch: limit,
     lease_seconds: LEASE_SECONDS,
@@ -59,7 +65,7 @@ export async function claimDueTargets(limit: number): Promise<ClaimedTarget[]> {
 
   if (error) {
     console.error('[publish] claim failed: %s', error.message)
-    return []
+    return null
   }
 
   return data ?? []
