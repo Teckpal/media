@@ -459,6 +459,7 @@ export type WhatsappLinkRow = {
   user_id: string
   phone_e164: string
   verified_at: string | null
+  otp_hash: string | null
   otp_expires_at: string | null
   otp_attempts: number
   revoked_at: string | null

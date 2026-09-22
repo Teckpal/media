@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local throwaway Postgres cluster (scripts/local-db)
+.local-db/
+
+# Supabase CLI scratch
+supabase/.temp/

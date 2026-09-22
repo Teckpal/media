@@ -4,6 +4,7 @@ import {
   dayKeyInZone,
   isPast,
   localInputToUtc,
+  minutesOfDayInZone,
   monthRangeUtc,
   utcToLocalInput,
 } from './time.ts'
@@ -125,4 +126,20 @@ test('isPast allows a minute of slack for clock skew', () => {
   // a person picking a time and the server storing it.
   assert.equal(isPast('2026-10-01T11:59:30.000Z', now), false)
   assert.equal(isPast('2026-10-01T12:05:00.000Z', now), false)
+})
+
+test('minutes of day are read in the workspace zone, not the reader’s', () => {
+  // 05:00 UTC is 11:00 in Dhaka (+6).
+  const instant = '2026-09-24T05:00:00.000Z'
+  assert.equal(minutesOfDayInZone(instant, 'Asia/Dhaka'), 11 * 60)
+  assert.equal(minutesOfDayInZone(instant, 'UTC'), 5 * 60)
+})
+
+test('midnight is zero, not twenty-four hundred', () => {
+  assert.equal(minutesOfDayInZone('2026-09-24T18:00:00.000Z', 'Asia/Dhaka'), 0)
+})
+
+test('minutes survive a half-hour offset zone', () => {
+  // Kolkata is +5:30, so 05:00 UTC is 10:30.
+  assert.equal(minutesOfDayInZone('2026-09-24T05:00:00.000Z', 'Asia/Kolkata'), 10 * 60 + 30)
 })
