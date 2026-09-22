@@ -1,7 +1,5 @@
 import Link from 'next/link'
-import { Check } from 'lucide-react'
-import { Card } from '@/components/ui/card'
-import { buttonStyles } from '@/components/ui/button'
+import { PlanCard } from '@/components/marketing/plan-card'
 import { createClient } from '@/lib/supabase/server'
 import { formatMoney } from '@/lib/money'
 import { ROUTES } from '@/lib/routes'
@@ -43,68 +41,52 @@ export async function Pricing({
   const packages = plans ?? []
 
   return (
-    <section id="pricing" className="space-y-6">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">{heading}</h2>
-        <p className="max-w-2xl text-sm text-muted-foreground">{note}</p>
-      </div>
+    <section id="pricing" className="scroll-mt-20">
+      <h2 className="text-3xl font-semibold tracking-tight text-balance text-white sm:text-4xl">
+        {heading}
+      </h2>
+      <p className="mt-4 max-w-2xl text-pretty text-white/60">{note}</p>
 
       {packages.length === 0 ? (
         // Rather than an empty grid. If the catalogue cannot be read, saying so
         // is better than a page that looks like the product has no prices.
-        <Card>
-          <p className="text-sm text-muted-foreground">
+        <div className="mt-12 rounded-2xl border border-white/10 bg-white/[0.03] p-7">
+          <p className="text-sm text-white/60">
             Our prices are not loading right now. Create an account and we will
             show them to you there, or get in touch.
           </p>
-        </Card>
+        </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="mt-12 grid gap-4 sm:grid-cols-3">
           {packages.map((plan) => (
-            <Card key={plan.id} className="flex flex-col gap-3">
-              <div>
-                <p className="font-medium">{plan.display_name}</p>
-                <p className="mt-1 text-3xl font-semibold tracking-tight">
-                  {formatMoney(plan.price_per_seat_minor, plan.currency)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  per connected account / month
-                </p>
-              </div>
-
-              {plan.description ? (
-                <p className="text-sm text-muted-foreground">{plan.description}</p>
-              ) : null}
-
-              <ul className="space-y-1.5 text-sm">
-                <li className="flex items-start gap-2">
-                  <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-                  {plan.ai_credits_per_month.toLocaleString()} AI credits a month
-                </li>
-                <li className="flex items-start gap-2">
-                  <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-                  {plan.max_seats
+            <div key={plan.id} className="flex flex-col gap-3">
+              <PlanCard
+                name={plan.display_name}
+                price={formatMoney(plan.price_per_seat_minor, plan.currency)}
+                description={plan.description}
+                includes={[
+                  `${plan.ai_credits_per_month.toLocaleString()} AI credits a month`,
+                  plan.max_seats
                     ? `Up to ${plan.max_seats} connected accounts`
-                    : 'Unlimited connected accounts'}
-                </li>
-              </ul>
+                    : 'Unlimited connected accounts',
+                  'Scheduling, the calendar and the publish queue',
+                  'In-app and email alerts when something breaks',
+                ]}
+              />
 
+              {/* Outside the card on purpose — see `PlanCard`. */}
               <Link
                 href={ROUTES.signup}
-                className={buttonStyles({
-                  variant: 'secondary',
-                  fullWidth: true,
-                  className: 'mt-auto',
-                })}
+                className="inline-flex h-11 w-full items-center justify-center rounded-[14px] border border-white/25 px-4 text-sm font-semibold text-white transition-colors hover:bg-white/10"
               >
                 Start with {plan.display_name}
               </Link>
-            </Card>
+            </div>
           ))}
         </div>
       )}
 
-      <p className="max-w-2xl text-sm text-muted-foreground">{paymentsLine}</p>
+      <p className="mt-8 max-w-2xl text-sm text-pretty text-white/45">{paymentsLine}</p>
     </section>
   )
 }

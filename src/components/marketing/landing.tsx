@@ -1,9 +1,9 @@
 import Link from 'next/link'
-import { ArrowRight, Check } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
+import { Hero } from '@/components/marketing/hero'
+import { DashboardPreview } from '@/components/marketing/dashboard-preview'
+import { HowItWorks, Networks, Pillars, Refusals } from '@/components/marketing/sections'
 import { Pricing } from '@/components/marketing/pricing'
-import { Alert } from '@/components/ui/alert'
-import { Card } from '@/components/ui/card'
-import { buttonStyles } from '@/components/ui/button'
 import type { RegionCopy } from '@/lib/marketing/copy'
 
 /**
@@ -13,6 +13,10 @@ import type { RegionCopy } from '@/lib/marketing/copy'
  * addressed to — not in what the product does. Keeping the structure in one
  * component is what stops the Bangladesh page quietly falling a feature behind
  * the other one.
+ *
+ * The page is dark in both colour schemes. It is built around photography that
+ * is dark, so a light variant would be a different design rather than this one
+ * inverted.
  */
 export function Landing({
   copy,
@@ -25,117 +29,75 @@ export function Landing({
   signedIn: boolean
 }) {
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-20 px-4 pb-24 sm:px-8">
-      {/*
-        A suggestion, not a redirect. Sending a visitor somewhere they did not
-        ask to go on the strength of an IP address is how a traveller ends up
-        on the wrong page with no obvious way back — and it would make `/` an
-        unstable thing to share.
-      */}
-      {suggestOtherRegion ? (
-        <div className="pt-4">
-          <Alert>
-            {copy.otherRegion.prompt}{' '}
-            <Link
-              href={copy.otherRegion.path}
-              className="font-medium text-primary hover:underline"
-            >
-              {copy.otherRegion.label}
-            </Link>
-            .
-          </Alert>
-        </div>
-      ) : null}
+    <div className="bg-[var(--night)]">
+      <Hero copy={copy} signedIn={signedIn} suggestOtherRegion={suggestOtherRegion} />
 
-      {/* --- hero --- */}
-      <section className="space-y-6 pt-10 sm:pt-16">
-        <p className="text-sm font-medium text-primary">{copy.hero.eyebrow}</p>
+      <Networks networks={copy.networks} />
+      <DashboardPreview />
+      <Pillars pillars={copy.pillars} />
+      <HowItWorks steps={copy.steps} />
+      <Refusals refusals={copy.refusals} />
 
-        <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-          {copy.hero.heading}
-        </h1>
-
-        <p className="max-w-2xl text-lg text-muted-foreground">{copy.hero.subheading}</p>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href={signedIn ? '/dashboard' : copy.hero.primaryCta.href}
-            className={buttonStyles({ size: 'lg' })}
-          >
-            {signedIn ? 'Go to your dashboard' : copy.hero.primaryCta.label}
-            <ArrowRight className="size-4" aria-hidden />
-          </Link>
-
-          <Link
-            href={copy.hero.secondaryCta.href}
-            className={buttonStyles({ variant: 'secondary', size: 'lg' })}
-          >
-            {copy.hero.secondaryCta.label}
-          </Link>
-        </div>
-
-        <ul className="flex flex-wrap gap-x-6 gap-y-2 pt-2">
-          {copy.proofPoints.map((point) => (
-            <li key={point} className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Check className="size-4 shrink-0 text-success" aria-hidden />
-              {point}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {/* --- what it does --- */}
-      <section id="how" className="scroll-mt-16 space-y-6">
-        <h2 className="text-2xl font-semibold tracking-tight">What it does</h2>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          {copy.features.map((feature) => (
-            <Card key={feature.title} className="space-y-2">
-              <h3 className="font-medium">{feature.title}</h3>
-              <p className="text-sm text-muted-foreground">{feature.body}</p>
-            </Card>
-          ))}
+      {/* --- plans --- */}
+      <section className="bg-[var(--night-band)] py-24">
+        <div className="mx-auto w-full max-w-6xl px-4 sm:px-8">
+          <Pricing
+            region={copy.region}
+            heading={copy.pricingHeading}
+            note={copy.pricingNote}
+            paymentsLine={copy.paymentsLine}
+          />
         </div>
       </section>
-
-      <Pricing
-        region={copy.region}
-        heading={copy.pricingHeading}
-        note={copy.pricingNote}
-        paymentsLine={copy.paymentsLine}
-      />
 
       {/* --- questions --- */}
-      <section id="faq" className="scroll-mt-16 space-y-6">
-        <h2 className="text-2xl font-semibold tracking-tight">Questions</h2>
+      <section id="faq" className="scroll-mt-20 bg-[var(--night)] py-24">
+        <div className="mx-auto w-full max-w-6xl px-4 sm:px-8">
+          <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            Short answers
+          </h2>
 
-        <dl className="divide-y divide-border border-y border-border">
-          {copy.faq.map((item) => (
-            <div key={item.question} className="py-4">
-              <dt className="font-medium">{item.question}</dt>
-              <dd className="mt-1.5 max-w-2xl text-sm text-muted-foreground">
-                {item.answer}
-              </dd>
-            </div>
-          ))}
-        </dl>
+          <dl className="mt-12 divide-y divide-white/10 border-y border-white/10">
+            {copy.faq.map((item) => (
+              <div key={item.question} className="grid gap-2 py-6 sm:grid-cols-3 sm:gap-8">
+                <dt className="font-medium text-balance text-white">{item.question}</dt>
+                <dd className="text-sm text-pretty text-white/60 sm:col-span-2">
+                  {item.answer}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
       </section>
 
-      <section className="space-y-4">
-        <h2 className="text-2xl font-semibold tracking-tight text-balance">
-          Ready when you are.
-        </h2>
-        <p className="max-w-xl text-sm text-muted-foreground">
-          Create an account, connect a Page, and write your first post. You can
-          decide about paying afterwards.
-        </p>
-        <Link
-          href={signedIn ? '/dashboard' : copy.hero.primaryCta.href}
-          className={buttonStyles({ size: 'lg' })}
-        >
-          {signedIn ? 'Go to your dashboard' : copy.hero.primaryCta.label}
-          <ArrowRight className="size-4" aria-hidden />
-        </Link>
+      {/* --- closing --- */}
+      <section className="bg-[var(--plum)] py-28">
+        <div className="mx-auto w-full max-w-3xl px-4 text-center sm:px-8">
+          <h2 className="text-3xl font-semibold tracking-tight text-balance text-white sm:text-5xl">
+            {copy.hero.heading}
+          </h2>
+          <p className="mx-auto mt-5 max-w-xl text-pretty text-white/70">
+            Create an account, connect a Page, and write your first post. You can
+            decide about paying afterwards.
+          </p>
+
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href={signedIn ? '/dashboard' : copy.hero.primaryCta.href}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white px-6 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
+            >
+              {signedIn ? 'Go to your dashboard' : copy.hero.primaryCta.label}
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
+
+            <Link
+              href="/login"
+              className="inline-flex h-11 items-center justify-center rounded-full border border-white/25 px-6 text-sm font-medium text-white transition-colors hover:bg-white/10"
+            >
+              I already have an account
+            </Link>
+          </div>
+        </div>
       </section>
     </div>
   )

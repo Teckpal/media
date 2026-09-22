@@ -40,6 +40,18 @@ export type RegionCopy = {
 
   features: { title: string; body: string }[]
 
+  /** How you actually operate it, in the order you meet each step. */
+  steps: { title: string; body: string }[]
+
+  /** The networks, and whether you can post to them today. */
+  networks: Network[]
+
+  /** The three columns of "what it does". */
+  pillars: Pillar[]
+
+  /** Promises stated as refusals, which are the ones worth believing. */
+  refusals: { title: string; body: string }[]
+
   pricingHeading: string
   pricingNote: string
   /** How money actually moves in this region. */
@@ -50,6 +62,129 @@ export type RegionCopy = {
   /** The nudge to the other region's page. Never an automatic redirect. */
   otherRegion: { prompt: string; label: string; path: string }
 }
+
+/**
+ * Section 4's onboarding, told as the visitor will meet it.
+ *
+ * The order is the order the router gate enforces, so the page cannot promise
+ * a path through the product that the software will not let anyone walk.
+ */
+/**
+ * `live` means you can use it today. Anything else is `planned`, and the page
+ * has to say so — Section 11 puts four of the six networks in later phases, and
+ * a landing page that lists them flat is a landing page that lies.
+ */
+export type Availability = 'live' | 'planned'
+
+export type Network = { name: string; art: string; status: Availability }
+
+export type Pillar = {
+  title: string
+  items: { label: string; status: Availability }[]
+}
+
+/**
+ * The six networks from Section 1, in the order Section 11 builds them.
+ *
+ * The artwork is keyed by `art` rather than by name so a rename cannot silently
+ * break an image, and every file here exists in `public/art`.
+ */
+const NETWORKS: Network[] = [
+  { name: 'Facebook Page', art: 'facebook', status: 'live' },
+  { name: 'Instagram', art: 'instagram', status: 'live' },
+  { name: 'LinkedIn', art: 'linkedin', status: 'planned' },
+  { name: 'YouTube', art: 'youtube', status: 'planned' },
+  { name: 'TikTok', art: 'tiktok', status: 'planned' },
+  { name: 'X', art: 'x', status: 'planned' },
+]
+
+/**
+ * What the product does, in three columns.
+ *
+ * `planned` is used strictly: a thing counts as live only if somebody can do it
+ * in the app today. Approvals and team invitations have their tables and their
+ * rules in the database and no screen yet, which makes them planned — the
+ * database being ready is not the same as the feature existing.
+ */
+const PILLARS: Pillar[] = [
+  {
+    title: 'Publishing',
+    items: [
+      { label: 'Publishing and scheduling', status: 'live' },
+      { label: 'A calendar in your own timezone', status: 'live' },
+      { label: 'A queue that never sends twice', status: 'live' },
+      { label: 'Pause a scheduled post, resume it later', status: 'live' },
+      { label: 'Retries, then an honest failure', status: 'live' },
+      { label: 'Bulk upload from a spreadsheet', status: 'planned' },
+    ],
+  },
+  {
+    title: 'Working together',
+    items: [
+      { label: 'Owner, admin, editor and viewer roles', status: 'live' },
+      { label: 'Per-workspace access, checked on the server', status: 'live' },
+      { label: 'Team invitations', status: 'planned' },
+      { label: 'Approval steps before anything goes out', status: 'planned' },
+      { label: 'A client who approves from a link, with no account', status: 'planned' },
+      { label: 'Saved captions and templates', status: 'planned' },
+    ],
+  },
+  {
+    title: 'Connecting up',
+    items: [
+      { label: 'Facebook Pages and Instagram business accounts', status: 'live' },
+      { label: 'Tokens encrypted, never readable by a browser', status: 'live' },
+      { label: 'In-app and email alerts when something breaks', status: 'live' },
+      { label: 'LinkedIn and YouTube, then TikTok and X', status: 'planned' },
+      { label: 'AI captions and suggested posting times', status: 'planned' },
+      { label: 'Run the tool from WhatsApp', status: 'planned' },
+    ],
+  },
+]
+
+/**
+ * Section 6 and Section 7, read as promises.
+ *
+ * Every one of these is a rule the database enforces rather than a preference
+ * the interface expresses, which is the only reason they are worth printing.
+ */
+const REFUSALS: RegionCopy['refusals'] = [
+  {
+    title: 'It will not publish without a subscription that covers the account',
+    body: 'The check happens on the server, next to the data, every time. A crafted request gets no further than the button does.',
+  },
+  {
+    title: 'It will not send the same post twice',
+    body: 'Every post and target carries a key the database refuses to accept a second time. Two workers running at once divide the work instead of duplicating it.',
+  },
+  {
+    title: 'It will not quietly reach into your page',
+    body: 'Deleting a published post removes it from here and says plainly that it stays live on the platform. Deleting it there is done there, by you.',
+  },
+  {
+    title: 'It will not delete your work for not paying',
+    body: 'Publishing pauses three days after a missed payment. Drafts, media, the calendar and your connections all stay exactly where they were.',
+  },
+]
+
+const SHARED_STEPS: RegionCopy['steps'] = [
+  {
+    title: 'Create your workspace',
+    body: 'Sign up, confirm your email, and say whether you are posting for yourself or for a business. It takes a minute and decides what the rest of the app shows you.',
+  },
+  {
+    title: 'Connect an account',
+    body: 'Sign in to Facebook and pick the Page — and the Instagram business account attached to it — that you want to post to. An account already connected to another workspace is refused, so two people cannot post to the same Page by accident.',
+  },
+  {
+    title: 'Write, or plan the month',
+    body: 'Draft a post and see it checked against each platform’s rules as you type. Drag it on the calendar to schedule it. Nothing publishes until you say so.',
+  },
+  {
+    title: 'Let it go out, and hear about it',
+    body: 'Scheduled posts are published by a queue that retries on failure and tells you — in the app and by email — if a post did not make it or a connection needs renewing.',
+  },
+]
 
 const SHARED_FEATURES: RegionCopy['features'] = [
   {
@@ -130,6 +265,10 @@ export const GLOBAL_COPY: RegionCopy = {
   ],
 
   features: SHARED_FEATURES,
+  steps: SHARED_STEPS,
+  networks: NETWORKS,
+  pillars: PILLARS,
+  refusals: REFUSALS,
 
   pricingHeading: 'Priced per connected account',
   pricingNote:
@@ -170,6 +309,10 @@ export const BD_COPY: RegionCopy = {
   ],
 
   features: SHARED_FEATURES,
+  steps: SHARED_STEPS,
+  networks: NETWORKS,
+  pillars: PILLARS,
+  refusals: REFUSALS,
 
   pricingHeading: 'Priced in taka, per connected account',
   pricingNote:

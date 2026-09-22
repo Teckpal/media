@@ -20,6 +20,11 @@ test('each page is complete enough to publish', () => {
     assert.ok(copy.hero.subheading, copy.region)
     assert.equal(copy.proofPoints.length, 3, copy.region)
     assert.ok(copy.features.length >= 4, copy.region)
+    assert.ok(copy.steps.length >= 3, copy.region)
+    for (const step of copy.steps) {
+      assert.ok(step.title.length > 0, copy.region)
+      assert.ok(step.body.length > 20, `${copy.region}: "${step.title}" has no real body`)
+    }
     assert.ok(copy.faq.length >= 5, copy.region)
     assert.ok(copy.paymentsLine, copy.region)
   }

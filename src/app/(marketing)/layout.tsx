@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { cookies, headers } from 'next/headers'
 import { RegionSwitch } from '@/components/marketing/region-switch'
+import { SiteFooter } from '@/components/marketing/site-footer'
 import { Wordmark } from '@/components/brand/wordmark'
-import { buttonStyles } from '@/components/ui/button'
 import { isSignedIn } from '@/lib/marketing/visitor'
 import { REGION_COOKIE, readRegionHint } from '@/lib/region'
 import { ROUTES } from '@/lib/routes'
@@ -33,29 +33,39 @@ export default async function MarketingLayout({ children }: LayoutProps<'/'>) {
   )
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-8">
+    <div className="flex min-h-dvh flex-col bg-[var(--night)]">
+      {/*
+        Over the hero rather than above it. The artwork runs to the top of the
+        page, so a header with its own background would cut a band across it.
+      */}
+      <header className="absolute inset-x-0 top-0 z-20">
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-5 sm:px-8">
           <Link href={ROUTES.home} className="inline-block">
-            <Wordmark />
+            <Wordmark className="text-white" />
           </Link>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
             <RegionSwitch current={region} />
 
             {signedIn ? (
-              <Link href={ROUTES.dashboard} className={buttonStyles({ size: 'sm' })}>
+              <Link
+                href={ROUTES.dashboard}
+                className="inline-flex h-9 items-center rounded-full bg-white px-5 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
+              >
                 Dashboard
               </Link>
             ) : (
               <>
                 <Link
                   href={ROUTES.login}
-                  className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  className="text-sm text-white/70 transition-colors hover:text-white"
                 >
-                  Sign in
+                  Log in
                 </Link>
-                <Link href={ROUTES.signup} className={buttonStyles({ size: 'sm' })}>
+                <Link
+                  href={ROUTES.signup}
+                  className="inline-flex h-9 items-center rounded-full bg-white px-5 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
+                >
                   Get started
                 </Link>
               </>
@@ -66,31 +76,7 @@ export default async function MarketingLayout({ children }: LayoutProps<'/'>) {
 
       <main className="flex-1">{children}</main>
 
-      <footer className="border-t border-border">
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-4 px-4 py-8 sm:px-8">
-          <div className="space-y-1">
-            <Wordmark className="text-base" />
-            <p className="text-xs text-muted-foreground">
-              Plan, schedule and publish across your social accounts.
-            </p>
-          </div>
-
-          <nav className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted-foreground">
-            <Link href={ROUTES.home} className="hover:text-foreground">
-              Global
-            </Link>
-            <Link href={ROUTES.bdLanding} className="hover:text-foreground">
-              Bangladesh
-            </Link>
-            <Link href="/legal/privacy" className="hover:text-foreground">
-              Privacy
-            </Link>
-            <Link href="/legal/terms" className="hover:text-foreground">
-              Terms
-            </Link>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   )
 }

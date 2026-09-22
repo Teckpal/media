@@ -24,7 +24,7 @@ export function RegionSwitch({ current }: { current: BillingRegion }) {
       <div
         role="group"
         aria-labelledby="region-switch-label"
-        className="inline-flex rounded-[var(--radius)] border border-border p-0.5"
+        className="inline-flex rounded-full border border-white/20 p-0.5"
       >
         {(['bd', 'global'] as const).map((region) => {
           const isCurrent = region === current
@@ -38,8 +38,8 @@ export function RegionSwitch({ current }: { current: BillingRegion }) {
               aria-current={isCurrent ? 'true' : undefined}
               className={
                 isCurrent
-                  ? 'rounded-[calc(var(--radius)-2px)] bg-surface-muted px-2.5 py-1 text-xs font-medium text-foreground'
-                  : 'rounded-[calc(var(--radius)-2px)] px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground'
+                  ? 'rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--night)]'
+                  : 'rounded-full px-3 py-1 text-xs text-white/65 transition-colors hover:text-white'
               }
             >
               {LABELS[region]}
