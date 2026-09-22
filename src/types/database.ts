@@ -422,6 +422,33 @@ export type NotificationDeliveryRow = {
   error: string | null
   attempts: number
   sent_at: string | null
+  /** Module 8: backoff gate for a provider that is briefly unhappy. */
+  next_attempt_at: string | null
+  /** Module 8: why nobody was sent this. A skip is a decision, not a silence. */
+  skip_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Module 8. Read state per person.
+ *
+ * `notifications.read_at` cannot express this: a workspace-wide notification
+ * is read by one member at a time, and one column on the shared row would have
+ * the first reader mark it read for everybody.
+ */
+export type NotificationReadRow = {
+  notification_id: string
+  user_id: string
+  read_at: string
+}
+
+export type NotificationPreferenceRow = {
+  user_id: string
+  email_publishing: boolean
+  email_connections: boolean
+  email_billing: boolean
+  email_team: boolean
   created_at: string
   updated_at: string
 }
@@ -523,6 +550,8 @@ export type Database = {
         NotificationDeliveryRow,
         'notification_id' | 'channel'
       >
+      notification_reads: Table<NotificationReadRow, 'notification_id' | 'user_id'>
+      notification_preferences: Table<NotificationPreferenceRow, 'user_id'>
       whatsapp_links: Table<WhatsappLinkRow, 'user_id' | 'phone_e164'>
       audit_log: Table<AuditLogRow, 'action'>
       oauth_sessions: Table<
@@ -574,6 +603,12 @@ export type Database = {
         Returns: Json
       }
       expire_lapsed_ai_grants: { Args: Record<never, never>; Returns: number }
+      unread_notification_count: { Args: { ws: string }; Returns: number }
+      claim_notification_deliveries: {
+        Args: { max_batch?: number; max_attempts?: number }
+        Returns: NotificationDeliveryRow[]
+      }
+      fail_exhausted_deliveries: { Args: { max_attempts?: number }; Returns: number }
     }
     Enums: {
       platform: PlatformEnum

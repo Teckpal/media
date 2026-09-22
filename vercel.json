@@ -10,6 +10,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/notifications",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/billing",
       "schedule": "15 2 * * *"
     }

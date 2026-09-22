@@ -15,7 +15,7 @@ Section numbers below refer to that note.
 | 5 | Posts & calendar | §6.2 | done |
 | 6 | Queue & publishing | §4, §9 | done |
 | 7 | Billing, regions, publish gate | §7, §7A | done |
-| 8 | Notifications | §11 Phase 1 | todo |
+| 8 | Notifications | §11 Phase 1 | done |
 | 9 | BD + Global landing | §7A.1 | todo |
 
 Phase 2 (AI Planner, credit ledger, approvals, Self/MOTiF, LinkedIn + YouTube,
@@ -552,3 +552,88 @@ pricing, 12 amounts, 11 IPN signature.
 - Nothing reconciles a payment that stays `pending` because the IPN never
   arrived and the customer never came back. After 24 hours it is closed as
   incomplete, which is honest but not the same as asking the gateway.
+
+## Module 8 — notifications (done)
+
+Section 11, Phase 1: in-app and email. The rows Modules 4, 6 and 7 have been
+queueing all along now reach someone.
+
+**A schema mistake, found by trying to use it.** `notifications.read_at` is one
+column on one row, but a notification with a null `user_id` is addressed to the
+whole workspace — which Modules 4, 6 and 7 all do deliberately, because whoever
+connected an account or scheduled a post may have left (§6.3). Read state for a
+shared row is per person, and one column cannot hold it: the first member to
+open the list would have marked it read for everybody. Migration 0014 moves
+read state to `notification_reads`, keyed by (notification, user), for shared
+and personal alike. `read_at` is left in place with a comment saying what
+replaced it, rather than dropped.
+
+**The fan-out is a trigger, not a call.** Four files across three modules
+already insert notifications and Module 9 will add more; one of them forgetting
+to enqueue an email is exactly the omission nobody notices until a customer
+says "you never told me". So `notifications_fan_out` writes the delivery rows
+on insert — in-app already marked sent, because the row existing *is* the
+delivery, and email pending. Nothing is queued for WhatsApp: it is Phase 3
+(§8), and an empty queue beats one full of rows nothing will ever pick up.
+
+**Two filters decide who gets an email, and they answer different questions.**
+Eligibility is about the workspace — a notification goes to people who could
+act on it, so a renewal reminder stops at the owner, since §6.3 gives nobody
+else the ability to pay it, and a viewer is never the audience for anything.
+Preference is about the person, applied afterwards. In-app is subject to
+neither: turning email off must never mean being kept in the dark.
+
+**Routine success is not emailed.** A workspace publishing ten posts a day to
+two platforms produces twenty `post_published` notifications. Emailing all of
+them would train every editor to filter the address that also carries "your
+account needs reconnecting". They are shown, counted on the bell and kept — the
+email is what is withheld, and the delivery row says so rather than vanishing.
+
+**The email templates escape everything and link almost nothing.** A
+notification body carries a post caption, an account name and a gateway's error
+message, all of it text somebody else wrote; unescaped in HTML, a caption is an
+injection into a mail client. And only a plain single-slash internal path
+becomes a link — `//evil.example`, `javascript:`, a backslash — all refused, so
+a row in a table can never put an attacker's URL behind our from-address. Both
+rules are tested, and both are why `templates.ts` is pure.
+
+**Delivery is claimed the way publishing is** (`skip locked`, attempts, the
+same backoff curve imported from the publish worker rather than a second one
+that drifts out of step). One deviation worth recording: a *partial* success
+counts as sent. There is one delivery row per channel, so retrying would
+re-send to everyone who already received it — and a failure against one address
+is almost always that address, not the queue. The failures are recorded on the
+row instead.
+
+**Settings exists now.** The navigation had always linked to `/settings` and
+nothing was there; it now holds the email preferences, since they have to live
+somewhere a person can find them. The rest of §3's settings arrive with the
+modules that own them.
+
+### Verified
+
+`build` (32 routes), `typecheck`, `lint` clean, **136 tests passing** — 24 new
+(13 email rendering and link safety, 11 routing and audience).
+
+### Not verified
+
+- The migrations still have never run. `0014` adds the first `after insert`
+  trigger that writes to another table, and the read-state policy leans on a
+  correlated `exists` against `notifications` — read back, not executed.
+- **No email has ever been sent.** `RESEND_API_KEY` is unset and `EMAIL_FROM`
+  is still `noreply@example.com`, so the dispatcher will skip every delivery
+  with "No email provider is configured" until both are set and the sending
+  domain is verified with Resend. That skip is deliberate: a queue of pending
+  rows would hide the fact that nobody is being told anything.
+
+### Known gaps
+
+- No digest or coalescing. Ten posts failing at 9am is ten emails. A per-hour
+  digest per category is the obvious next step and is not built.
+- The bell count is rendered per request. It updates on navigation and after
+  marking something read, not on its own — there is no subscription or polling.
+- WhatsApp (§8) remains Phase 3. The table, the channel enum and the audit
+  `source` are all in place; nothing writes to them.
+- `notifications.read_at` and 0008's `notifications_update_own` policy are now
+  vestigial. They are harmless, and removing a policy is a migration for a day
+  when there is a reason to touch that file.

@@ -30,6 +30,7 @@ export const ROUTES = {
   connectSelect: '/connections/select',
   connectTransfer: '/connections/transfer',
   team: '/team',
+  notifications: '/notifications',
   billing: '/billing',
   /**
    * Where a gateway sends the customer back to.
