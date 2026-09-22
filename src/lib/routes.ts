@@ -30,7 +30,16 @@ export const ROUTES = {
   connectSelect: '/connections/select',
   connectTransfer: '/connections/transfer',
   team: '/team',
+  notifications: '/notifications',
   billing: '/billing',
+  /**
+   * Where a gateway sends the customer back to.
+   *
+   * Under `/api` and public, because the gateway returns them with a
+   * cross-site POST that carries no session cookie. It proves nothing on its
+   * own (§7.2) — it re-validates and then hands the browser on to /billing.
+   */
+  billingReturn: '/api/billing/return',
   settings: '/settings',
 } as const
 
@@ -59,5 +68,6 @@ export const PUBLIC_PREFIXES = [
   '/invite',
   '/legal',
   '/api/webhooks',
+  '/api/billing/return',
   '/api/cron',
 ] as const

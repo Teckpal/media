@@ -7,6 +7,7 @@ import {
   cancelPostAction,
   deleteDraftAction,
   pausePostAction,
+  publishNowAction,
   removePublishedAction,
   resumePostAction,
 } from '@/lib/posts/actions'
@@ -131,8 +132,22 @@ export function PostActions({
   status: PostStatus
   platforms: Platform[]
 }) {
+  // Section 6.2. A failed post is included because retrying it is the whole
+  // point of telling someone it failed; a published one is not, because
+  // sending it again is the one thing the app must never do by accident.
+  const canPublishNow = ['draft', 'scheduled', 'paused', 'failed'].includes(status)
+
   return (
     <div className="flex flex-wrap items-start gap-2">
+      {canPublishNow ? (
+        <ActionButton
+          action={publishNowAction}
+          postId={postId}
+          label={status === 'failed' ? 'Try again now' : 'Publish now'}
+          busyLabel="Sending…"
+        />
+      ) : null}
+
       {status === 'scheduled' ? (
         <ActionButton
           action={pausePostAction}

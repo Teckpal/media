@@ -10,6 +10,7 @@ import {
   Users,
 } from 'lucide-react'
 import { Wordmark } from '@/components/brand/wordmark'
+import { NotificationBell } from '@/components/notifications/bell'
 import { Button } from '@/components/ui/button'
 import { ROUTES } from '@/lib/routes'
 import { requireWorkspace } from '@/lib/auth/gate'
@@ -74,6 +75,7 @@ export default async function AppLayout({ children }: LayoutProps<'/'>) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-end gap-3 border-b border-border px-4 py-3 sm:px-6">
+          <NotificationBell workspaceId={active.workspace.id} />
           <span className="truncate text-sm text-muted-foreground">{user.email}</span>
           <form action={signOutAction}>
             <Button type="submit" variant="ghost" size="sm">

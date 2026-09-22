@@ -29,6 +29,23 @@
 
   --ring: oklch(52% 0.19 268 / 0.45);
   --radius: 0.625rem;
+
+  /*
+    The two brand colours, taken from the hero's wave field so the page and the
+    thing at the top of it agree. Rose is the horizon, violet the wave.
+  */
+  --brand-rose: #f43f5e;
+  --brand-violet: #a855f7;
+
+  /*
+    The marketing site's own palette — the deep plum the artwork sits in. These
+    are fixed rather than theme-aware: the landing pages are dark in both
+    colour schemes, because the photography they are built around is.
+  */
+  --night: #150a1b;
+  --night-band: #1e0f26;
+  --plum: #2e1737;
+  --gold: #ffbe00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -79,6 +96,13 @@
 
   --color-warning: var(--warning);
   --color-warning-subtle: var(--warning-subtle);
+
+  --color-brand-rose: var(--brand-rose);
+  --color-brand-violet: var(--brand-violet);
+  --color-night: var(--night);
+  --color-night-band: var(--night-band);
+  --color-plum: var(--plum);
+  --color-gold: var(--gold);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

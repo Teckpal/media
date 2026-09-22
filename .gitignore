@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the contract itself. `.env*` had been swallowing `.env.example`
+# since the scaffold, so the one file that tells a new clone which variables
+# exist was never in the repository.
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +43,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local throwaway Postgres cluster (scripts/local-db)
+.local-db/
+
+# Supabase CLI scratch
+supabase/.temp/

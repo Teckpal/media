@@ -97,6 +97,35 @@ export function formatTimeInZone(
   }).format(new Date(date))
 }
 
+/**
+ * Minutes since midnight in `timeZone`, 0–1439.
+ *
+ * Derived from a 24-hour formatter rather than by reading `formatTimeInZone`'s
+ * output: that one is for people and says "11:00 am", so splitting it on a
+ * colon yields NaN for the minutes and silently files every post into the same
+ * non-existent slot.
+ *
+ * `hourCycle: 'h23'` rather than `hour12: false`, because the latter still
+ * reports midnight as "24" under some locales.
+ */
+export function minutesOfDayInZone(date: Date | string, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    timeZone,
+  }).formatToParts(new Date(date))
+
+  const value = (type: 'hour' | 'minute') =>
+    Number(parts.find((part) => part.type === type)?.value ?? NaN)
+
+  const hours = value('hour')
+  const minutes = value('minute')
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0
+
+  return ((hours % 24) * 60 + minutes)
+}
+
 /** Human date and time in `timeZone`, e.g. "1 Oct 2026, 9:00 am". */
 export function formatDateTimeInZone(
   date: Date | string,

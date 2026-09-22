@@ -234,6 +234,12 @@ export type PostTargetRow = {
   external_post_id: string | null
   external_permalink: string | null
   published_at: string | null
+  /** Module 6: the worker's claim on this target, and when it lapses. */
+  lease_expires_at: string | null
+  /** Module 6: backoff gate. A pending target is not due until this passes. */
+  next_attempt_at: string | null
+  /** Module 6: Instagram's media container, reused by a retry. */
+  external_container_id: string | null
   created_at: string
   updated_at: string
 }
@@ -416,6 +422,33 @@ export type NotificationDeliveryRow = {
   error: string | null
   attempts: number
   sent_at: string | null
+  /** Module 8: backoff gate for a provider that is briefly unhappy. */
+  next_attempt_at: string | null
+  /** Module 8: why nobody was sent this. A skip is a decision, not a silence. */
+  skip_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * Module 8. Read state per person.
+ *
+ * `notifications.read_at` cannot express this: a workspace-wide notification
+ * is read by one member at a time, and one column on the shared row would have
+ * the first reader mark it read for everybody.
+ */
+export type NotificationReadRow = {
+  notification_id: string
+  user_id: string
+  read_at: string
+}
+
+export type NotificationPreferenceRow = {
+  user_id: string
+  email_publishing: boolean
+  email_connections: boolean
+  email_billing: boolean
+  email_team: boolean
   created_at: string
   updated_at: string
 }
@@ -426,6 +459,7 @@ export type WhatsappLinkRow = {
   user_id: string
   phone_e164: string
   verified_at: string | null
+  otp_hash: string | null
   otp_expires_at: string | null
   otp_attempts: number
   revoked_at: string | null
@@ -517,6 +551,8 @@ export type Database = {
         NotificationDeliveryRow,
         'notification_id' | 'channel'
       >
+      notification_reads: Table<NotificationReadRow, 'notification_id' | 'user_id'>
+      notification_preferences: Table<NotificationPreferenceRow, 'user_id'>
       whatsapp_links: Table<WhatsappLinkRow, 'user_id' | 'phone_e164'>
       audit_log: Table<AuditLogRow, 'action'>
       oauth_sessions: Table<
@@ -534,6 +570,46 @@ export type Database = {
       post_workspace: { Args: { p: string }; Returns: string }
       shares_workspace_with: { Args: { other: string }; Returns: boolean }
       purge_expired_oauth_sessions: { Args: Record<never, never>; Returns: number }
+      claim_due_targets: {
+        Args: { max_batch?: number; lease_seconds?: number; max_attempts?: number }
+        Returns: PostTargetRow[]
+      }
+      roll_up_post: { Args: { p: string }; Returns: PostStatusEnum }
+      reap_stuck_targets: { Args: { max_attempts?: number }; Returns: number }
+      publishing_coverage: {
+        Args: { ws: string }
+        Returns: {
+          status: SubscriptionStatusEnum
+          grace_until: string | null
+          current_period_end: string
+        }[]
+      }
+      consume_billing_credits: {
+        Args: { ws: string; inv: string; cur: CurrencyEnum; max_minor: number }
+        Returns: number
+      }
+      release_billing_credits: { Args: { inv: string }; Returns: number }
+      activate_paid_invoice: {
+        Args: {
+          p_payment: string
+          p_plan: string
+          p_seats: number
+          p_period_start: string
+          p_period_end: string
+          p_ai_credits: number
+          p_region: BillingRegionEnum
+          p_gateway: PaymentGatewayEnum
+          p_source?: string
+        }
+        Returns: Json
+      }
+      expire_lapsed_ai_grants: { Args: Record<never, never>; Returns: number }
+      unread_notification_count: { Args: { ws: string }; Returns: number }
+      claim_notification_deliveries: {
+        Args: { max_batch?: number; max_attempts?: number }
+        Returns: NotificationDeliveryRow[]
+      }
+      fail_exhausted_deliveries: { Args: { max_attempts?: number }; Returns: number }
     }
     Enums: {
       platform: PlatformEnum

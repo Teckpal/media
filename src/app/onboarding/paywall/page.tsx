@@ -1,30 +1,30 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { Check } from 'lucide-react'
 import { PayLaterButton } from './pay-later-button'
+import { PlanPicker, type PlanOption } from '@/components/billing/plan-picker'
 import { Alert } from '@/components/ui/alert'
-import { Card } from '@/components/ui/card'
-import { buttonStyles } from '@/components/ui/button'
 import { guardOnboardingStep, requireVerifiedUser } from '@/lib/auth/gate'
 import { STEP_ORDER } from '@/lib/onboarding/steps'
 import { createClient } from '@/lib/supabase/server'
+import { regionCanCheckout } from '@/lib/billing/gateways'
 import { REGION_COOKIE, readRegionHint } from '@/lib/region'
 import { formatMoney } from '@/lib/money'
 import { ROUTES } from '@/lib/routes'
+import type { PlanRow } from '@/types/database'
 
 export const metadata: Metadata = { title: 'Pick a plan' }
 
 /**
  * Step 4, the paywall (Section 5, rule 5 and Section 7A).
  *
- * Checkout itself is Module 7. What is settled here is the shape Section 7A
- * asks for: two regional paywalls, prices read from the database by region, and
- * "pay later" as a first-class exit into unpaid mode.
+ * Two regional paywalls, prices read from the database by region, and "pay
+ * later" as a first-class exit into unpaid mode.
  *
  * The region shown is a *guess* — the visitor's IP, or the country they gave at
  * signup. Section 7A.2 rule 3 is that the payment method has the final word, so
- * nothing here is binding and no price is ever taken from the browser.
+ * nothing here is binding and no price is ever taken from the browser. The
+ * picker posts a plan code; Module 7's checkout reads the price itself.
  */
 export default async function PaywallPage() {
   const user = await requireVerifiedUser()
@@ -55,6 +55,31 @@ export default async function PaywallPage() {
     .eq('region', region)
     .eq('is_active', true)
     .order('sort_order', { ascending: true })
+    .returns<PlanRow[]>()
+
+  // Section 7.1's billing unit. Step 2 guarantees at least one connection, so
+  // this is the number the customer will actually be charged for.
+  const { count: seatCount } = await supabase
+    .from('social_accounts')
+    .select('id', { count: 'exact', head: true })
+    .eq('workspace_id', workspaceId)
+    .in('status', ['active', 'needs_reconnect'])
+
+  const seats = Math.max(1, seatCount ?? 0)
+
+  const options: PlanOption[] = (plans ?? []).map((plan) => ({
+    code: plan.code,
+    displayName: plan.display_name,
+    description: plan.description,
+    priceLabel: formatMoney(plan.price_per_seat_minor, plan.currency),
+    aiCredits: plan.ai_credits_per_month,
+    maxSeats: plan.max_seats,
+    totalLabel: formatMoney(plan.price_per_seat_minor * seats, plan.currency),
+    tooSmall: plan.max_seats !== null && seats > plan.max_seats,
+    current: false,
+  }))
+
+  const canCheckout = regionCanCheckout(region)
 
   return (
     <div className="space-y-6">
@@ -66,43 +91,16 @@ export default async function PaywallPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        {(plans ?? []).map((plan) => (
-          <Card key={plan.id} className="flex flex-col gap-3">
-            <div>
-              <p className="font-medium">{plan.display_name}</p>
-              <p className="mt-1 text-2xl font-semibold tracking-tight">
-                {formatMoney(plan.price_per_seat_minor, plan.currency)}
-              </p>
-              <p className="text-xs text-muted-foreground">per account / month</p>
-            </div>
-
-            {plan.description ? (
-              <p className="text-sm text-muted-foreground">{plan.description}</p>
-            ) : null}
-
-            <ul className="space-y-1.5 text-sm">
-              <li className="flex items-start gap-2">
-                <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-                {plan.ai_credits_per_month.toLocaleString()} AI credits a month
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-                {plan.max_seats ? `Up to ${plan.max_seats} accounts` : 'Unlimited accounts'}
-              </li>
-            </ul>
-
-            {/* Module 7 turns this into a real checkout. The price is resolved
-                server-side from the plan id, never sent from here. */}
-            <a
-              href={`${ROUTES.billing}/checkout?plan=${plan.code}`}
-              className={buttonStyles({ fullWidth: true, className: 'mt-auto' })}
-            >
-              Choose {plan.display_name}
-            </a>
-          </Card>
-        ))}
-      </div>
+      <PlanPicker
+        plans={options}
+        seats={seats}
+        canPay={canCheckout}
+        unavailableReason={
+          canCheckout
+            ? null
+            : 'Card payments outside Bangladesh are not open yet. You can carry on without paying and we will set you up directly.'
+        }
+      />
 
       <Alert title="Not ready yet?">
         You can go on without paying. You will be able to edit your setup, manage

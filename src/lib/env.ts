@@ -42,6 +42,28 @@ export function publicEnv() {
   return cachedPublic
 }
 
+/**
+ * The site's own origin, on its own.
+ *
+ * Separate from `publicEnv()` because of where it is needed: `robots.ts`,
+ * `sitemap.ts` and the root layout's metadata all run during `next build`, and
+ * `publicEnv()` validates the Supabase keys as well — so asking it for a URL
+ * made a build require credentials it has no use for. Module 0 deliberately
+ * made the validators lazy for that reason; this keeps that promise.
+ *
+ * It still refuses rather than guessing. A sitemap quietly published with
+ * `localhost` in it is worse than a build that stops and names the variable.
+ */
+export function appUrl(): string {
+  const parsed = z.string().url().safeParse(process.env.NEXT_PUBLIC_APP_URL)
+
+  if (!parsed.success) {
+    throw new Error('Invalid public environment. Check: NEXT_PUBLIC_APP_URL')
+  }
+
+  return parsed.data.replace(/\/$/, '')
+}
+
 const serverSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   TOKEN_ENCRYPTION_KEY: z.string().min(1),

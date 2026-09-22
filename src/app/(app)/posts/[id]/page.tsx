@@ -82,10 +82,53 @@ export default async function PostPage({
 
       {query.saved === '1' ? <Alert tone="success">Saved.</Alert> : null}
 
+      {post.status === 'publishing' ? (
+        <Alert title="Going out now">
+          This post is being published. It cannot be edited, paused or deleted
+          while that is happening.
+        </Alert>
+      ) : null}
+
       {post.status === 'failed' && post.last_error ? (
         <Alert tone="danger" title="This post did not go out">
           {post.last_error}
         </Alert>
+      ) : null}
+
+      {/*
+        Per-account progress, for a post that is still in the middle of its
+        fan-out or that stopped part-way. A post can succeed on Facebook and
+        fail on Instagram, and the roll-up on the post itself cannot say that.
+      */}
+      {['publishing', 'failed'].includes(post.status) && targets.length > 0 ? (
+        <Card className="space-y-2">
+          <h2 className="text-sm font-medium">Where it is going</h2>
+          <ul className="space-y-1.5 text-sm">
+            {targets.map((target) => (
+              <li key={target.social_account_id}>
+                <span className="text-muted-foreground">
+                  {PLATFORM_LABELS[target.platform as Platform]} · {target.status}
+                </span>
+                {target.last_error ? (
+                  <p className="text-xs text-danger">{target.last_error}</p>
+                ) : null}
+                {target.external_permalink ? (
+                  <>
+                    {' '}
+                    <a
+                      href={target.external_permalink}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="text-primary hover:underline"
+                    >
+                      View on the platform
+                    </a>
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Card>
       ) : null}
 
       {post.status === 'pending_approval' ? (
