@@ -3,11 +3,13 @@
 import { randomUUID } from 'node:crypto'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { after } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { getSessionUser } from '@/lib/auth/session'
 import { canPublish, explainBlock } from '@/lib/billing/entitlements'
 import { blockingIssues, validatePost, type MediaItem } from '@/lib/posts/validation'
+import { runPublishTick } from '@/lib/publish/worker'
 import { isPast, localInputToUtc } from '@/lib/time'
 import { atLeast, type Platform } from '@/lib/constants'
 import { ROUTES } from '@/lib/routes'
@@ -320,6 +322,32 @@ async function syncTargets(
         toDrop.map((t) => t.id),
       )
   }
+
+  // Module 6: a target that failed last time is what rescheduling a failed post
+  // is *for*, so it goes back in the queue with a clean slate. One that already
+  // published does not — Section 6.2's worst outcome is a post going out twice,
+  // and "try the whole thing again" is exactly how that happens.
+  const toRevive = (existing ?? []).filter(
+    (t) => wanted.has(t.social_account_id) && t.status === 'failed',
+  )
+
+  if (toRevive.length > 0) {
+    await supabase
+      .from('post_targets')
+      .update({
+        status: 'pending',
+        attempts: 0,
+        last_error: null,
+        next_attempt_at: null,
+        lease_expires_at: null,
+        // A new run needs a new container; the old one has expired by now.
+        external_container_id: null,
+      })
+      .in(
+        'id',
+        toRevive.map((t) => t.id),
+      )
+  }
 }
 
 // --- state changes -----------------------------------------------------------
@@ -422,6 +450,121 @@ export async function resumePostAction(
   revalidatePath(ROUTES.posts)
   revalidatePath(ROUTES.calendar)
   return { error: null, notice: 'Resumed.' }
+}
+
+/**
+ * Section 6.2: "Publish now" — the answer the composer offers when a chosen
+ * time has already passed.
+ *
+ * It does not publish inline. It puts the post at the front of the same queue
+ * everything else goes through, and then nudges the worker so the user does not
+ * wait for the next minute's cron. Publishing inside the request would mean a
+ * user's click holding a serverless function open through a video upload, and a
+ * closed tab losing the post.
+ *
+ * Everything the scheduled path checks is checked here too, because "now" is
+ * still a schedule — it is just a short one.
+ */
+export async function publishNowAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const actor = await requireEditor()
+  const parsed = postIdSchema.safeParse({ postId: formData.get('postId') })
+  if (!parsed.success) return { error: 'Unknown post.' }
+
+  const supabase = await createClient()
+
+  const { data: post } = await supabase
+    .from('posts')
+    .select('id, status, caption, media_ids')
+    .eq('id', parsed.data.postId)
+    .eq('workspace_id', actor.workspace.id)
+    .maybeSingle()
+
+  if (!post) return { error: 'Unknown post.' }
+
+  if (post.status === 'publishing') {
+    return { error: 'This post is already going out.' }
+  }
+
+  if (!['draft', 'scheduled', 'paused', 'failed'].includes(post.status)) {
+    return { error: 'That post has already finished.' }
+  }
+
+  // Section 6.3: an editor cannot route around approvals by publishing now.
+  if (actor.workspace.approvals_enabled && !atLeast(actor.role, 'admin')) {
+    return { error: 'An admin or owner has to approve this before it can go out.' }
+  }
+
+  const { data: targetRows } = await supabase
+    .from('post_targets')
+    .select('social_account_id')
+    .eq('post_id', post.id)
+    .in('status', ['pending', 'failed'])
+
+  const accountIds = [...new Set((targetRows ?? []).map((t) => t.social_account_id))]
+  if (accountIds.length === 0) {
+    return { error: 'Choose at least one account before publishing.' }
+  }
+
+  const accounts = await loadTargets(actor.workspace.id, accountIds)
+
+  // Re-validated, because the post may have been sitting as a draft since
+  // before its media was changed.
+  const media = await loadMedia(actor.workspace.id, post.media_ids)
+  const issues = blockingIssues(
+    validatePost(
+      accounts.map((a) => a.platform as Platform),
+      { caption: post.caption, media },
+    ),
+  )
+
+  if (issues.length > 0) return { error: issues[0].message }
+
+  const entitlement = await canPublish(actor.workspace, accountIds)
+  if (!entitlement.allowed) return { error: explainBlock(entitlement.block) }
+
+  // A target that failed earlier is why someone is pressing this button.
+  // Published ones are left alone — sending those again is the double publish
+  // Section 6.2 exists to prevent.
+  await supabase
+    .from('post_targets')
+    .update({
+      status: 'pending',
+      attempts: 0,
+      last_error: null,
+      next_attempt_at: null,
+      lease_expires_at: null,
+      external_container_id: null,
+    })
+    .eq('post_id', post.id)
+    .eq('status', 'failed')
+
+  const { error } = await supabase
+    .from('posts')
+    .update({ status: 'scheduled', scheduled_at: new Date().toISOString() })
+    .eq('id', post.id)
+    // Loses cleanly if anything moved the post while this was being decided.
+    .eq('status', post.status)
+
+  if (error) return { error: 'Could not publish that post. Try again.' }
+
+  // The queue would find this within the minute anyway; `after` runs the tick
+  // once the response has gone, so the user sees the click take effect without
+  // waiting for the send. If the invocation dies here, the cron is the backstop
+  // — nothing about the post's state depends on this call happening.
+  after(async () => {
+    try {
+      await runPublishTick({ limit: 5 })
+    } catch (cause) {
+      console.error('[publish] nudge after publish-now failed: %s', String(cause))
+    }
+  })
+
+  revalidatePath(ROUTES.posts)
+  revalidatePath(ROUTES.calendar)
+  return { error: null, notice: 'Going out now. Refresh in a moment to see how it landed.' }
 }
 
 export async function cancelPostAction(

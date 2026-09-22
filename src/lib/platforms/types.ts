@@ -93,6 +93,22 @@ export interface PlatformAdapter {
    * refresh and the connection simply has to be redone.
    */
   refresh(token: IssuedToken): Promise<IssuedToken | null>
+
+  /** Sends the post. Throws `PublishError`; see its flags for what happens next. */
+  publish(request: PublishRequest): Promise<PublishResult>
+
+  /**
+   * Did an earlier attempt land after all?
+   *
+   * The Graph API has no idempotency key, so after an ambiguous failure the
+   * only honest way to avoid publishing twice is to go and look. Returns null
+   * when nothing matching is found — and callers treat "cannot tell" as a
+   * refusal to retry rather than as a licence to send again.
+   */
+  findRecentlyPublished(
+    request: PublishRequest,
+    since: Date,
+  ): Promise<PublishResult | null>
 }
 
 /** Did the grant include everything the integration needs? */
@@ -102,4 +118,97 @@ export function missingScopes(
 ): string[] {
   const have = new Set(granted)
   return required.filter((scope) => !have.has(scope))
+}
+
+// --- publishing --------------------------------------------------------------
+
+/**
+ * A piece of media as the platform will see it.
+ *
+ * `url` is a signed, time-limited link into our private bucket. Meta fetches
+ * the bytes itself rather than accepting an upload, so the link has to outlive
+ * the request — see `src/lib/publish/media.ts` for how long and why.
+ */
+export type PublishMedia = {
+  id: string
+  mimeType: string
+  url: string
+  altText?: string | null
+}
+
+export type PublishRequest = {
+  externalAccountId: string
+  /** Decrypted at the last moment, never logged. */
+  accessToken: string
+  caption: string
+  media: PublishMedia[]
+  /**
+   * Our key for this (post, account), minted once (Section 6.2).
+   *
+   * Meta has nowhere to put it — the Graph API has no idempotency header — so
+   * it is not sent. It identifies the attempt in our own logs, and the real
+   * protection against a double publish is the single-flight claim plus
+   * `findRecentlyPublished` below.
+   */
+  idempotencyKey: string
+  /** From an earlier attempt, when one got as far as building a container. */
+  containerId?: string | null
+}
+
+export type PublishResult = {
+  externalPostId: string
+  permalink?: string | null
+  /** Worth storing: a retry publishes this container rather than a second one. */
+  containerId?: string | null
+}
+
+/**
+ * A publish that did not work.
+ *
+ * Two flags decide what the worker does next, and they are not the same
+ * question:
+ *
+ * - `retryable` — would doing this again plausibly work? A 500 or a rate limit,
+ *   yes. A revoked token or a caption the platform rejected, no; retrying
+ *   those burns attempts and delays telling the user something they have to
+ *   act on.
+ * - `ambiguous` — might it have worked anyway? A timeout after the request was
+ *   accepted looks identical to one before it. A retry here risks publishing
+ *   twice, so the worker reconciles before it tries again.
+ */
+export class PublishError extends Error {
+  readonly retryable: boolean
+  readonly ambiguous: boolean
+  /**
+   * The platform is still processing something we already handed it — an
+   * Instagram video container, typically. Not a failure, so it does not spend
+   * one of the attempts; the worker simply comes back later.
+   */
+  readonly stillProcessing: boolean
+  /** A container the next attempt should resume rather than rebuild. */
+  readonly containerId?: string | null
+  /** Provider detail for the log. Never shown to the user verbatim. */
+  readonly detail?: string
+  /** What the user is told. */
+  readonly userMessage: string
+
+  constructor(
+    userMessage: string,
+    options: {
+      retryable: boolean
+      ambiguous?: boolean
+      stillProcessing?: boolean
+      containerId?: string | null
+      detail?: string
+    },
+  ) {
+    super(userMessage)
+    this.name = 'PublishError'
+    this.userMessage = userMessage
+    this.retryable = options.retryable
+    this.ambiguous = options.ambiguous ?? false
+    this.stillProcessing = options.stillProcessing ?? false
+    this.containerId = options.containerId ?? null
+    this.detail = options.detail
+  }
 }

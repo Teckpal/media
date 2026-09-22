@@ -1,7 +1,13 @@
 import 'server-only'
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
-import type { SocialAccountRow, SubscriptionRow, WorkspaceRow } from '@/types/database'
+import type {
+  Database,
+  SocialAccountRow,
+  SubscriptionRow,
+  WorkspaceRow,
+} from '@/types/database'
 
 /**
  * Gate 2 of the two in Section 4.
@@ -25,6 +31,21 @@ export type PublishBlock =
   | { reason: 'accounts_inactive'; accountIds: string[]; names: string[] }
 
 export type Entitlement = { allowed: true } | { allowed: false; block: PublishBlock }
+
+/**
+ * Which client asks the question.
+ *
+ * A signed-in user gets the request-scoped client, so RLS narrows the answer to
+ * their own workspace. The publish worker has no user in scope and passes the
+ * service-role client instead — it is asking about a workspace nobody is
+ * currently signed in to. Same rules either way; only the reader differs.
+ */
+export type EntitlementClient = SupabaseClient<Database>
+
+export type EntitlementOptions = {
+  now?: Date
+  client?: EntitlementClient
+}
 
 /** Statuses that still permit publishing. */
 function subscriptionCovers(
@@ -55,14 +76,16 @@ function subscriptionCovers(
 export async function canPublish(
   workspace: Pick<WorkspaceRow, 'id' | 'is_billing_exempt'>,
   accountIds: readonly string[],
-  now = new Date(),
+  options: EntitlementOptions = {},
 ): Promise<Entitlement> {
+  const now = options.now ?? new Date()
+
   // Section 13 Q4: Self (MOTiF) is internal and exempt. The flag is on the
   // workspace rather than inferred from its type, so a one-off exemption for
   // a partner or a beta account needs no code change.
   if (workspace.is_billing_exempt) return { allowed: true }
 
-  const supabase = await createClient()
+  const supabase = options.client ?? (await createClient())
 
   const { data: subscription } = await supabase
     .from('subscriptions')

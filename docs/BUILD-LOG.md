@@ -13,7 +13,7 @@ Section numbers below refer to that note.
 | 3 | Onboarding state machine | §5 | done |
 | 4 | Connections (FB + IG) | §6.1 | done |
 | 5 | Posts & calendar | §6.2 | done |
-| 6 | Queue & publishing | §4, §9 | todo |
+| 6 | Queue & publishing | §4, §9 | done |
 | 7 | Billing, regions, publish gate | §7, §7A | todo |
 | 8 | Notifications | §11 Phase 1 | todo |
 | 9 | BD + Global landing | §7A.1 | todo |
@@ -331,3 +331,110 @@ crypto, 13 time, 15 validation.
 ### Still not verified
 
 The migrations have never run, so none of this has touched a real database.
+
+## Module 6 — queue and publishing (done)
+
+Section 4's publish flow and Section 9's "Queue: due posts (every minute)".
+
+**The queue is `post_targets`, not a second table.** A jobs table would be two
+rows that can disagree about whether a post went out, and reconciling them is
+precisely the bug §6.2 is worried about. Migration `0012` adds only the
+bookkeeping a claim needs: a lease, a next-attempt time, and the Instagram
+container id.
+
+**The claim is one statement.** `claim_due_targets` selects due targets
+`for update ... skip locked` and updates them in the same query, then moves
+their posts to `publishing` in the same transaction. Two ticks running at once
+— which Vercel permits, and which "Publish now" causes deliberately — divide
+the work instead of duplicating it. The second worker steps over the rows the
+first is holding rather than queueing behind them and publishing them again.
+
+Only posts still `scheduled` are moved. The lock trigger raises on any update
+to a publishing post that does not change its status, so touching one whose
+sibling target claimed it a minute ago would abort the whole claim.
+
+**Three ways a publish can fail, and they are not the same.** `policy.ts` is
+pure and tested, and it separates:
+
+- *retryable* — would this work if repeated? A 500 or a rate limit, yes; a
+  revoked token or a rejected caption, no. Retrying a permanent failure burns
+  the attempt budget and delays the notification the user actually needs.
+- *safe to repeat* — might it have worked already? A timeout after the request
+  was accepted is indistinguishable from one before it.
+- *still processing* — Instagram is working on a container we already handed
+  it. Not a failure at all: the attempt is refunded and the next tick resumes.
+
+**The double-publish problem, honestly.** The Graph API has no idempotency key,
+so ours is never sent — it identifies the attempt in our own logs and nothing
+more. What actually prevents a duplicate is three things: the single-flight
+claim, the stored Instagram container id (a retry publishes *that* container
+rather than building a second one), and `findRecentlyPublished`, which goes and
+looks at the account before any retry that follows an ambiguous failure.
+
+That reconciliation matches on the caption, which means **a post with no
+caption cannot be identified**, and the adapter says so by returning null. The
+worker reads null as "do not retry". So the worst case is a post somebody has
+to check by hand — never the same post twice in a client's feed.
+
+**What the worker re-checks before sending**, because a post can sit in the
+calendar for weeks: the post is still publishing, the account still exists and
+is still `active`, gate 2 still covers *that* account, the token still decrypts,
+the media still exists. Each is a different sentence in the UI, because each is
+a different thing for the user to do.
+
+A gate-2 refusal at publish time **fails** the target rather than pausing it.
+The post is already `publishing` and §6.2's state machine has no way back from
+there; `failed` is a state the user can reschedule out of once they have sorted
+the plan out. Pausing scheduled posts when a plan lapses is Module 7's job, in
+the billing cron — this is the backstop, not the mechanism.
+
+**Waiting has a deadline.** Waiting on a container costs no attempt, which
+means without a clock a container Meta never finishes would be picked up and
+put back every minute for ever. Thirty minutes from the scheduled time, it is
+reported as failed.
+
+**Rescheduling revives failed targets, not published ones.** A post that went
+out on Facebook and failed on Instagram, then rescheduled, retries Instagram
+only. "Try the whole thing again" is exactly how a double publish happens.
+
+**"Publish now"** (§6.2, the answer when a chosen time has passed) does not
+publish inline — that would hold a serverless function open through a video
+upload and lose the post if the tab closed. It puts the post at the front of
+the same queue and nudges the worker with `after()`, so the click takes effect
+without waiting for the next minute's cron. Nothing about the post's state
+depends on that nudge arriving; the cron is the backstop.
+
+**Two `security definer` functions were a hole waiting to happen.** Postgres
+grants EXECUTE to PUBLIC by default, so `claim_due_targets` would have been
+callable over PostgREST by any signed-in browser — marching every workspace's
+queue forward. All three new functions are revoked from `public, anon,
+authenticated` and granted to `service_role` only. `purge_expired_oauth_sessions`
+from migration 0010 had the same oversight and is fixed here rather than left
+as a pattern to copy.
+
+### Verified
+
+`build` (24 routes), `typecheck`, `lint` clean, **67 tests passing** — 13
+crypto, 13 time, 15 validation, 13 publish planning, 13 retry policy.
+
+### Not verified
+
+- The migrations still have never run. `0012` in particular leans on
+  `for update ... skip locked`, a data-modifying CTE and `make_interval` — all
+  read back carefully, none executed. Treat the first `supabase db push` as the
+  real test.
+- No Meta credentials, so **nothing has ever been published**. Every Graph call
+  in `meta.ts` is written from the documented API and has not met the real one.
+  The error-code classification lists in particular are the kind of thing that
+  is only right after seeing production traffic.
+- Vercel cron is minute-granularity on a paid plan; `maxDuration = 60` assumes
+  the Hobby ceiling. Both want confirming against the actual account before
+  launch.
+
+### Known gap
+
+A post left `scheduled` with no claimable target — every target cancelled by a
+disconnect that then failed to pause the post — would sit in the calendar
+looking scheduled for ever. The paths that cancel targets do pause the post, so
+this needs two failures at once, but nothing sweeps for it. Worth a check in
+Module 8's cron.

@@ -234,6 +234,12 @@ export type PostTargetRow = {
   external_post_id: string | null
   external_permalink: string | null
   published_at: string | null
+  /** Module 6: the worker's claim on this target, and when it lapses. */
+  lease_expires_at: string | null
+  /** Module 6: backoff gate. A pending target is not due until this passes. */
+  next_attempt_at: string | null
+  /** Module 6: Instagram's media container, reused by a retry. */
+  external_container_id: string | null
   created_at: string
   updated_at: string
 }
@@ -534,6 +540,12 @@ export type Database = {
       post_workspace: { Args: { p: string }; Returns: string }
       shares_workspace_with: { Args: { other: string }; Returns: boolean }
       purge_expired_oauth_sessions: { Args: Record<never, never>; Returns: number }
+      claim_due_targets: {
+        Args: { max_batch?: number; lease_seconds?: number; max_attempts?: number }
+        Returns: PostTargetRow[]
+      }
+      roll_up_post: { Args: { p: string }; Returns: PostStatusEnum }
+      reap_stuck_targets: { Args: { max_attempts?: number }; Returns: number }
     }
     Enums: {
       platform: PlatformEnum
