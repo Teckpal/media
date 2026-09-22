@@ -546,6 +546,34 @@ export type Database = {
       }
       roll_up_post: { Args: { p: string }; Returns: PostStatusEnum }
       reap_stuck_targets: { Args: { max_attempts?: number }; Returns: number }
+      publishing_coverage: {
+        Args: { ws: string }
+        Returns: {
+          status: SubscriptionStatusEnum
+          grace_until: string | null
+          current_period_end: string
+        }[]
+      }
+      consume_billing_credits: {
+        Args: { ws: string; inv: string; cur: CurrencyEnum; max_minor: number }
+        Returns: number
+      }
+      release_billing_credits: { Args: { inv: string }; Returns: number }
+      activate_paid_invoice: {
+        Args: {
+          p_payment: string
+          p_plan: string
+          p_seats: number
+          p_period_start: string
+          p_period_end: string
+          p_ai_credits: number
+          p_region: BillingRegionEnum
+          p_gateway: PaymentGatewayEnum
+          p_source?: string
+        }
+        Returns: Json
+      }
+      expire_lapsed_ai_grants: { Args: Record<never, never>; Returns: number }
     }
     Enums: {
       platform: PlatformEnum

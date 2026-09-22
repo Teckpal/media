@@ -14,7 +14,7 @@ Section numbers below refer to that note.
 | 4 | Connections (FB + IG) | §6.1 | done |
 | 5 | Posts & calendar | §6.2 | done |
 | 6 | Queue & publishing | §4, §9 | done |
-| 7 | Billing, regions, publish gate | §7, §7A | todo |
+| 7 | Billing, regions, publish gate | §7, §7A | done |
 | 8 | Notifications | §11 Phase 1 | todo |
 | 9 | BD + Global landing | §7A.1 | todo |
 
@@ -31,9 +31,11 @@ Defaults from §13, applied unless overridden:
 - Q3 free trial: **none**. Scheduling and publishing are fully paid (§7.1).
 - Q4 Self (MOTiF): internal, billing-exempt.
 - Q5 downgrade: credit on next invoice, not a cash refund.
-- Q6 global gateway: **unresolved.** Global payments sit behind a
-  `PaymentGateway` interface. SSLCommerz is implemented; the global adapter is a
-  stub. Swapping in Paddle / Lemon Squeezy / Stripe is one file.
+- Q6 global gateway: **still unresolved**, and now unresolved behind a working
+  interface. `PaymentGateway` (Module 7) has SSLCommerz implemented end to end;
+  the global adapter reports itself unconfigured, so the Global paywall says so
+  rather than offering a button that cannot work. Swapping in Paddle / Lemon
+  Squeezy / Stripe is one file.
 - Q7 global launch: built together with BD, gated by the gateway adapter.
 
 ## Module 0 — scaffold (done)
@@ -438,3 +440,115 @@ disconnect that then failed to pause the post — would sit in the calendar
 looking scheduled for ever. The paths that cancel targets do pause the post, so
 this needs two failures at once, but nothing sweeps for it. Worth a check in
 Module 8's cron.
+
+## Module 7 — billing, regions and the publish gate (done)
+
+Sections 7, 7A and 13 Q5. Gate 2 finally has something behind it.
+
+**One rule shapes the whole module** (§7A.3): "the server reads the price from
+the DB by region + package. Never trust a price sent from the browser." So the
+only thing a form posts is a plan *code*. There is no field anywhere in the
+checkout path through which an amount could travel, and `startCheckout` reads
+every number from `plans` or computes it from what it read.
+
+**The arithmetic is pure and tested; the application of it is atomic.**
+`pricing.ts` knows about months, pro-ration, downgrade credit and tax order and
+touches nothing else — 22 tests. Applying a payment is the opposite problem:
+marking the invoice paid, extending the subscription, locking the region,
+paying the seats and granting the month's AI credits are one event, and
+supabase-js has no transaction. So they happen inside `activate_paid_invoice`
+(migration 0013) in one statement. A failure halfway cannot leave a customer
+charged and not activated.
+
+**Money never touches a float.** `amounts.ts` converts between our integer
+minor units and the decimal strings gateways speak, by string arithmetic.
+`parseFloat('1.15') * 100` is 114.999…, which is a poisha short on every
+invoice ending in 15 — right almost always, and very hard to find in a log.
+
+**Only the server-to-server callback may mark an invoice paid** (§7.2). The IPN
+route writes the raw event *before* acting on it, so the unique
+`(gateway, event_id)` recognises a replay; then it asks SSLCommerz directly
+with `val_id` and checks three things — the gateway says valid, the transaction
+is the one we asked about, and the amount and currency are the invoice's own. A
+genuine payment for the wrong amount is not a payment of this invoice.
+
+The customer's own return from the payment page runs the same settlement, since
+an IPN can be slow and someone who has just paid should not be shown an unpaid
+account. It is public and unauthenticated on purpose: SSLCommerz returns the
+browser with a cross-site POST that carries no session cookie, and there is
+nothing to protect — the route settles by transaction id and validates before
+believing anything.
+
+**Region is decided by the gateway that took the money.** §7A.2 rule 3 says the
+payment method has the final word, and that is implemented rather than asked
+about: SSLCommerz cannot settle a non-BD card, so a completed SSLCommerz
+payment *is* the evidence. The region locks on the first successful payment
+(rule 4). A payment arriving against an already-locked, contradicting region is
+flagged for support rather than thrown away — the money is real.
+
+**The renewal cycle is ours, not the gateway's** (§7.2), because SSLCommerz is
+one-time checkout. The daily sweep raises the next invoice seven days out,
+reminds at 7, 3 and 1 days, allows three days of grace past the due date, and
+only then withdraws publishing — pausing scheduled posts rather than cancelling
+them. Drafts, connections, media and the calendar all stay. A customer who pays
+late finds everything where they left it.
+
+**Two bugs found while wiring it up**, both worth recording:
+
+- *Gate 2 was broken for everyone but the owner.* `canPublish` reads
+  `subscriptions`, but migration 0008 makes that table owner-only (§6.3: "Admin:
+  everything except billing"). An editor opening the composer was told to buy a
+  plan their workspace already had. Fixed with `publishing_coverage`, a
+  security-definer function that answers the narrow question any member is
+  entitled to ask — covered, and until when — and exposes no amounts. The
+  owner-only policy on invoices is untouched.
+- *An early renewal would have flipped a healthy subscription to past due.*
+  The dunning sweep originally read overdue from open invoices; an owner
+  renewing mid-cycle raises one payable now, for a cycle that has not started.
+  It is now driven from the subscription's own period end, which is what
+  "overdue" actually means. An early renewal also now extends the cycle from
+  the current period end rather than restarting it, which would have quietly
+  shortened the month they had already bought.
+
+**The global gateway refuses honestly.** §13 Q6 is still unanswered — Paddle,
+Lemon Squeezy and Stripe differ on who is merchant of record, which is a tax
+question rather than a code one. The stub returns `isConfigured() === false`,
+so the Global paywall says so instead of offering a button that cannot work.
+A stub that quietly succeeded would be far worse: a workspace would believe it
+had paid, lock its billing region, and get a publish gate that opens on nothing.
+Answering Q6 replaces one file.
+
+**An exempt workspace can no longer be charged** (§13 Q4). Self / MOTiF
+publishes without a plan, and checkout now refuses it rather than taking money
+it should not — a bug that would have come with a receipt.
+
+### Verified
+
+`build` (28 routes), `typecheck`, `lint` clean, **112 tests passing** — 13
+crypto, 13 time, 15 validation, 13 publish planning, 13 retry policy, 22
+pricing, 12 amounts, 11 IPN signature.
+
+### Not verified
+
+- The migrations still have never run. `0013` is the heaviest SQL in the
+  project so far: three security-definer functions, a cursor `for update` loop
+  and one long activation transaction, all read back rather than executed.
+- **No payment has ever been taken.** There are no SSLCommerz credentials, so
+  the session API, the IPN and the validation API have all been written from
+  the documentation and none has met the real thing. The sandbox round trip is
+  the first thing to do when credentials exist.
+- Plan prices in `0009` are still placeholders, and BD VAT is still with the
+  accountant. `quoteSubscription` takes a tax rate as an input and nothing sets
+  it yet — applying VAT is a configuration change, not a rewrite.
+
+### Known gaps
+
+- Mid-cycle seat purchase is quoted (`quoteAddedSeats`, tested) but has no
+  screen yet. Connecting an account beyond the paid count leaves it draft-only,
+  which is what §7.2 says should happen; buying the extra seat means renewing.
+- Plan *downgrade* creates no credit yet. `downgradeCreditMinor` exists and is
+  tested, and `billing_credits` is consumed properly at checkout — what is
+  missing is the screen that calls it.
+- Nothing reconciles a payment that stays `pending` because the IPN never
+  arrived and the customer never came back. After 24 hours it is closed as
+  incomplete, which is honest but not the same as asking the gateway.

@@ -87,12 +87,19 @@ export async function canPublish(
 
   const supabase = options.client ?? (await createClient())
 
-  const { data: subscription } = await supabase
-    .from('subscriptions')
-    .select('status, grace_until, current_period_end')
-    .eq('workspace_id', workspace.id)
-    .in('status', ['active', 'past_due', 'grace'])
-    .maybeSingle()
+  // Asked through `publishing_coverage` (migration 0013) rather than by
+  // reading `subscriptions` directly.
+  //
+  // Section 6.3 makes billing the owner's alone, and migration 0008 enforces
+  // that with an owner-only policy on the table — which meant an editor
+  // opening the composer saw no subscription and was told to buy a plan their
+  // workspace already had. The function answers the narrow question any member
+  // is entitled to ask, and exposes no amounts.
+  const { data: coverage } = await supabase.rpc('publishing_coverage', {
+    ws: workspace.id,
+  })
+
+  const subscription = coverage?.[0]
 
   if (!subscription) {
     return { allowed: false, block: { reason: 'no_subscription' } }
