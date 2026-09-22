@@ -666,3 +666,81 @@ export async function deleteDraftAction(
   revalidatePath(ROUTES.posts)
   redirect(ROUTES.posts)
 }
+
+/**
+ * Section 6.2, the calendar's drag: move posts to another day, keeping the
+ * time of day they already had.
+ *
+ * Applied as a batch, because a swap is two moves that only make sense
+ * together — landing one of them and refusing the other would leave two posts
+ * on the same day with the wrong owner's time.
+ *
+ * Every rule is checked again here even though the grid has already checked it.
+ * The grid is a convenience; this is the boundary. A post that started
+ * publishing in the seconds since the page rendered must not move, and neither
+ * must anything into the past.
+ */
+const rescheduleSchema = z.object({
+  moves: z
+    .array(
+      z.object({
+        postId: z.string().uuid(),
+        /** Wall-clock in the workspace's zone, `YYYY-MM-DDTHH:mm`. */
+        scheduledAt: z.string().min(16),
+      }),
+    )
+    .min(1)
+    .max(50),
+})
+
+export async function reschedulePostsAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const actor = await requireEditor()
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(String(formData.get('moves') ?? ''))
+  } catch {
+    return { error: 'Could not read those changes.' }
+  }
+
+  const parsed = rescheduleSchema.safeParse({ moves: payload })
+  if (!parsed.success) return { error: 'Could not read those changes.' }
+
+  const timezone = actor.workspace.timezone
+  const supabase = await createClient()
+
+  for (const move of parsed.data.moves) {
+    const when = localInputToUtc(move.scheduledAt, timezone)
+    if (!when) return { error: 'One of those dates could not be read.' }
+
+    const { data: post } = await loadOwnPost(actor.workspace.id, move.postId)
+    if (!post) return { error: 'One of those posts is no longer here.' }
+
+    if (post.status === 'publishing') {
+      return { error: 'One of those posts is going out right now and cannot be moved.' }
+    }
+
+    // Section 6.2. The database refuses this too; saying it here means the
+    // message names the rule rather than showing a constraint violation.
+    if (post.status === 'scheduled' && isPast(when)) {
+      return { error: 'That would put a scheduled post in the past.' }
+    }
+
+    const { error } = await supabase
+      .from('posts')
+      .update({ scheduled_at: when.toISOString() })
+      .eq('id', post.id)
+      .neq('status', 'publishing')
+
+    if (error) return { error: 'Could not move one of those posts.' }
+  }
+
+  revalidatePath(ROUTES.calendar)
+  revalidatePath(ROUTES.posts)
+
+  const count = parsed.data.moves.length
+  return { error: null, notice: `Saved. ${count} post${count === 1 ? '' : 's'} moved.` }
+}

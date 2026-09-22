@@ -1,18 +1,18 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { Card } from '@/components/ui/card'
+import { MonthGrid, type GridPost } from '@/components/calendar/month-grid'
+import { SpotlightCursor } from '@/components/ui/spotlight-cursor'
 import { requireWorkspace } from '@/lib/auth/gate'
 import { createClient } from '@/lib/supabase/server'
 import {
   dayKeyInZone,
   formatTimeInZone,
+  minutesOfDayInZone,
   monthRangeUtc,
   todayInZone,
 } from '@/lib/time'
 import { ROUTES } from '@/lib/routes'
-import { cn } from '@/lib/utils'
-import type { PostStatus } from '@/lib/constants'
 
 export const metadata: Metadata = { title: 'Calendar' }
 
@@ -26,16 +26,6 @@ export const metadata: Metadata = { title: 'Calendar' }
  */
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-const DOT: Partial<Record<PostStatus, string>> = {
-  draft: 'bg-muted-foreground',
-  pending_approval: 'bg-warning',
-  scheduled: 'bg-primary',
-  publishing: 'bg-primary',
-  published: 'bg-success',
-  paused: 'bg-warning',
-  failed: 'bg-danger',
-}
 
 export default async function CalendarPage({ searchParams }: PageProps<'/calendar'>) {
   const { active } = await requireWorkspace()
@@ -63,13 +53,26 @@ export default async function CalendarPage({ searchParams }: PageProps<'/calenda
     .lt('scheduled_at', end.toISOString())
     .order('scheduled_at', { ascending: true })
 
-  const byDay = new Map<string, typeof posts>()
-  for (const post of posts ?? []) {
-    const key = dayKeyInZone(post.scheduled_at!, timezone)
-    const bucket = byDay.get(key) ?? []
-    bucket.push(post)
-    byDay.set(key, bucket)
-  }
+  /**
+   * The posts again, shaped for the grid.
+   *
+   * `clock` is the wall-clock time in the WORKSPACE's zone, and it is what a
+   * move carries to the new day — the day was what the drag changed, the hour
+   * was a decision somebody made. Working it out here rather than in the
+   * browser is what keeps a reader in London from moving a 9am Dhaka post to
+   * 3am (Section 6.2).
+   */
+  const gridPosts: GridPost[] = (posts ?? []).map((post) => {
+    const minutes = minutesOfDayInZone(post.scheduled_at!, timezone)
+    return {
+      id: post.id,
+      caption: post.caption,
+      status: post.status,
+      dayKey: dayKeyInZone(post.scheduled_at!, timezone),
+      clock: `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`,
+      time: formatTimeInZone(post.scheduled_at!, timezone),
+    }
+  })
 
   const cells = buildGrid(year, month)
   const monthName = new Intl.DateTimeFormat('en-GB', {
@@ -113,82 +116,16 @@ export default async function CalendarPage({ searchParams }: PageProps<'/calenda
         </div>
       </div>
 
-      <Card className="p-0">
-        <div className="grid grid-cols-7 border-b border-border">
-          {WEEKDAYS.map((day) => (
-            <div
-              key={day}
-              className="px-2 py-2 text-center text-xs font-medium text-muted-foreground"
-            >
-              {day}
-            </div>
-          ))}
-        </div>
+      <MonthGrid
+        posts={gridPosts}
+        cells={cells}
+        today={today}
+        weekdays={WEEKDAYS}
+      />
 
-        <div className="grid grid-cols-7">
-          {cells.map((cell, index) => {
-            const dayPosts = cell.key ? (byDay.get(cell.key) ?? []) : []
-            const isToday = cell.key === today
-
-            return (
-              <div
-                key={index}
-                className={cn(
-                  'min-h-24 border-b border-r border-border p-1.5 last:border-r-0',
-                  !cell.key && 'bg-surface-muted/40',
-                  index % 7 === 6 && 'border-r-0',
-                )}
-              >
-                {cell.key ? (
-                  <>
-                    <span
-                      className={cn(
-                        'inline-flex size-6 items-center justify-center rounded-full text-xs',
-                        isToday
-                          ? 'bg-primary font-medium text-primary-foreground'
-                          : 'text-muted-foreground',
-                      )}
-                    >
-                      {cell.day}
-                    </span>
-
-                    <ul className="mt-1 space-y-1">
-                      {dayPosts.slice(0, 3).map((post) => (
-                        <li key={post.id}>
-                          <Link
-                            href={`${ROUTES.posts}/${post.id}`}
-                            className="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-surface-muted"
-                          >
-                            <span
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                DOT[post.status] ?? 'bg-muted-foreground',
-                              )}
-                              aria-hidden
-                            />
-                            <span className="shrink-0 text-muted-foreground">
-                              {formatTimeInZone(post.scheduled_at!, timezone)}
-                            </span>
-                            <span className="truncate">
-                              {post.caption.trim() || 'Untitled'}
-                            </span>
-                          </Link>
-                        </li>
-                      ))}
-
-                      {dayPosts.length > 3 ? (
-                        <li className="px-1 text-xs text-muted-foreground">
-                          +{dayPosts.length - 3} more
-                        </li>
-                      ) : null}
-                    </ul>
-                  </>
-                ) : null}
-              </div>
-            )
-          })}
-        </div>
-      </Card>
+      {/* Decoration, and nothing depends on it: it draws nothing for a coarse
+          pointer or for anyone who has asked for reduced motion. */}
+      <SpotlightCursor config={{ radius: 260, brightness: 0.06, smoothing: 0.14 }} />
     </div>
   )
 }
