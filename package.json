@@ -12,17 +12,29 @@
     "db:push": "supabase db push",
     "db:reset": "supabase db reset",
     "db:types": "supabase gen types typescript --local > src/types/database.ts",
-    "test": "node --test \"src/**/*.test.ts\""
+    "test": "node --test \"src/**/*.test.ts\"",
+    "db:local:up": "node scripts/local-db/up.mjs",
+    "db:local:down": "node scripts/local-db/down.mjs",
+    "db:local:migrate": "node scripts/local-db/migrate.mjs",
+    "db:local:verify": "node scripts/local-db/verify-types.mjs",
+    "db:local:rules": "node scripts/local-db/rules.mjs",
+    "db:local": "npm run db:local:up && npm run db:local:migrate && npm run db:local:verify && npm run db:local:rules",
+    "check:supabase": "node scripts/check-supabase.mjs",
+    "db:remote:inspect": "node scripts/remote/inspect.mjs",
+    "db:remote:push": "node scripts/remote/push.mjs",
+    "db:remote:walk": "node scripts/remote/walk.mjs",
+    "db:remote:seed-demo": "node scripts/remote/seed-demo.mjs",
+    "db:remote:verify-login": "node scripts/remote/verify-login.mjs"
   },
   "dependencies": {
     "@date-fns/tz": "^1.5.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.116.0",
-    "date-fns": "^4.4.0",
     "lucide-react": "^1.47.0",
     "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "recharts": "^3.10.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -30,8 +42,10 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "embedded-postgres": "^17.10.0-beta.17",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "pg": "^8.23.0",
     "supabase": "^2.117.0",
     "tailwindcss": "^4",
     "typescript": "^5"

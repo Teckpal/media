@@ -1,0 +1,590 @@
+brands
+    id : uuid
+    tenant_id : uuid
+    name : text
+    description : text
+    audience : text
+    objectives : text
+    tone : text
+    languages : text[]
+    timezone : text
+    logo_url : text
+    colors : jsonb
+    approved_facts : jsonb
+    prohibited_claims : jsonb
+    hashtags : text[]
+    links : jsonb
+    competitors : jsonb
+    archived_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+users
+    id : uuid
+    email : public.citext
+    email_verified_at : timestamp with time zone
+    password_hash : text
+    full_name : text
+    avatar_url : text
+    locale : text
+    timezone : text
+    mfa_secret_enc : text
+    mfa_enabled_at : timestamp with time zone
+    disabled_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+plans
+    code : text
+    name : text
+    price_minor : bigint
+    currency : text
+    max_brands : integer
+    max_connections : integer
+    max_staff_seats : integer
+    max_client_approvers : integer
+    max_scheduled_posts_per_month : integer
+    max_storage_bytes : bigint
+    max_ai_tokens_per_month : bigint
+    is_active : boolean
+    includes_white_label : boolean
+    includes_ai : boolean
+    includes_mcp : boolean
+    includes_listings : boolean
+
+sessions
+    id : uuid
+    user_id : uuid
+    client_kind : text
+    user_agent : text
+    ip_hash : text
+    created_at : timestamp with time zone
+    last_seen_at : timestamp with time zone
+    expires_at : timestamp with time zone
+    revoked_at : timestamp with time zone
+    revoked_reason : text
+
+reports
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    template_id : uuid
+    name : text
+    period_start : date
+    period_end : date
+    status : text
+    storage_path : text
+    token_hash : text
+    expires_at : timestamp with time zone
+    created_by : uuid
+    created_at : timestamp with time zone
+
+sync_state
+    tenant_id : uuid
+    connection_id : uuid
+    stream : text
+    cursor : text
+    last_success_at : timestamp with time zone
+    last_error : text
+
+api_keys
+    id : uuid
+    tenant_id : uuid
+    name : text
+    key_hash : text
+    prefix : text
+    capabilities : text[]
+    created_by : uuid
+    last_used_at : timestamp with time zone
+    expires_at : timestamp with time zone
+    revoked_at : timestamp with time zone
+    created_at : timestamp with time zone
+
+delivery_attempts
+    id : bigint
+    tenant_id : uuid
+    delivery_id : uuid
+    attempt_no : integer
+    started_at : timestamp with time zone
+    finished_at : timestamp with time zone
+    outcome : text
+    http_status : integer
+    provider_code : text
+    message : text
+
+job_attempts
+    id : bigint
+    job_id : uuid
+    attempt_no : integer
+    started_at : timestamp with time zone
+    finished_at : timestamp with time zone
+    outcome : text
+    error : text
+
+asset_folders
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    parent_id : uuid
+    name : text
+    created_at : timestamp with time zone
+
+post_metrics
+    tenant_id : uuid
+    delivery_id : uuid
+    metric_key : text
+    metric_value : numeric
+    source : text
+    collected_at : timestamp with time zone
+
+memberships
+    id : uuid
+    tenant_id : uuid
+    user_id : uuid
+    role : public.member_role
+    status : public.membership_status
+    brand_scoped : boolean
+    invited_by : uuid
+    invited_at : timestamp with time zone
+    accepted_at : timestamp with time zone
+    revoked_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+conversation_notes
+    id : uuid
+    tenant_id : uuid
+    conversation_id : uuid
+    author_user_id : uuid
+    body : text
+    created_at : timestamp with time zone
+
+assets
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    folder_id : uuid
+    kind : text
+    storage_path : text
+    mime_type : text
+    byte_size : bigint
+    width : integer
+    height : integer
+    duration_ms : integer
+    checksum : text
+    alt_text : text
+    body : text
+    tags : text[]
+    usage_rights : text
+    rights_expires_at : timestamp with time zone
+    approved_at : timestamp with time zone
+    created_by : uuid
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+usage_ledger
+    id : bigint
+    tenant_id : uuid
+    metric : text
+    quantity : bigint
+    cost_minor : bigint
+    currency : text
+    metadata : jsonb
+    occurred_at : timestamp with time zone
+
+post_variants
+    id : uuid
+    tenant_id : uuid
+    revision_id : uuid
+    network : public.social_network
+    body : text
+    media_asset_ids : uuid[]
+    first_comment : text
+    options : jsonb
+
+outbox
+    id : bigint
+    tenant_id : uuid
+    topic : text
+    payload : jsonb
+    available_at : timestamp with time zone
+    dispatched_at : timestamp with time zone
+    attempts : integer
+    created_at : timestamp with time zone
+
+membership_brand_assignments
+    tenant_id : uuid
+    membership_id : uuid
+    brand_id : uuid
+    created_at : timestamp with time zone
+
+conversations
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    connection_id : uuid
+    network : public.social_network
+    kind : text
+    external_id : text
+    subject : text
+    state : public.conversation_state
+    assigned_to : uuid
+    is_read : boolean
+    first_message_at : timestamp with time zone
+    last_message_at : timestamp with time zone
+    first_response_at : timestamp with time zone
+    reply_window_expires_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+jobs
+    id : uuid
+    tenant_id : uuid
+    kind : text
+    payload : jsonb
+    idempotency_key : text
+    status : public.job_status
+    run_at : timestamp with time zone
+    attempts : integer
+    max_attempts : integer
+    lease_owner : text
+    lease_expires_at : timestamp with time zone
+    last_error : text
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+tenant_branding
+    tenant_id : uuid
+    product_name : text
+    logo_url : text
+    accent_hex : text
+    hide_our_mark : boolean
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+ai_generations
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    user_id : uuid
+    provider : text
+    model : text
+    prompt_version : text
+    purpose : text
+    input_tokens : integer
+    output_tokens : integer
+    cost_minor : bigint
+    error : text
+    created_at : timestamp with time zone
+
+campaigns
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    name : text
+    color : text
+    starts_on : date
+    ends_on : date
+    created_at : timestamp with time zone
+
+account_metrics
+    tenant_id : uuid
+    connection_id : uuid
+    metric_date : date
+    metric_key : text
+    metric_value : numeric
+    source : text
+    collected_at : timestamp with time zone
+
+audit_events
+    id : bigint
+    tenant_id : uuid
+    actor_user_id : uuid
+    actor_kind : text
+    action : text
+    object_type : text
+    object_id : text
+    summary : text
+    metadata : jsonb
+    ip_hash : text
+    created_at : timestamp with time zone
+
+billing_events
+    id : bigint
+    provider : text
+    external_id : text
+    tenant_id : uuid
+    kind : text
+    payload : jsonb
+    processed_at : timestamp with time zone
+    created_at : timestamp with time zone
+
+tenants
+    id : uuid
+    slug : public.citext
+    name : text
+    logo_url : text
+    brand_color : text
+    timezone : text
+    plan_code : text
+    publishing_paused_at : timestamp with time zone
+    suspended_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+    workspace_kind : text
+
+subscriptions
+    id : uuid
+    tenant_id : uuid
+    plan_code : text
+    provider : text
+    provider_ref : text
+    status : text
+    period_start : timestamp with time zone
+    period_end : timestamp with time zone
+    cancel_at : timestamp with time zone
+    created_at : timestamp with time zone
+
+review_links
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    post_id : uuid
+    token_hash : text
+    label : text
+    created_by : uuid
+    expires_at : timestamp with time zone
+    revoked_at : timestamp with time zone
+    last_viewed_at : timestamp with time zone
+    view_count : integer
+    created_at : timestamp with time zone
+
+webhook_events
+    id : bigint
+    network : public.social_network
+    external_id : text
+    signature_ok : boolean
+    received_at : timestamp with time zone
+    processed_at : timestamp with time zone
+    payload : jsonb
+
+post_comments
+    id : uuid
+    tenant_id : uuid
+    post_id : uuid
+    revision_id : uuid
+    author_user_id : uuid
+    author_link_id : uuid
+    body : text
+    is_internal : boolean
+    created_at : timestamp with time zone
+
+post_revisions
+    id : uuid
+    tenant_id : uuid
+    post_id : uuid
+    revision_no : integer
+    body : text
+    media_asset_ids : uuid[]
+    link_url : text
+    utm : jsonb
+    first_comment : text
+    mentions : jsonb
+    location : jsonb
+    content_hash : text
+    created_by : uuid
+    created_at : timestamp with time zone
+
+report_templates
+    id : uuid
+    tenant_id : uuid
+    name : text
+    config : jsonb
+    created_at : timestamp with time zone
+
+conversation_messages
+    id : uuid
+    tenant_id : uuid
+    conversation_id : uuid
+    external_id : text
+    direction : text
+    author_name : text
+    author_external_id : text
+    body : text
+    media : jsonb
+    sent_at : timestamp with time zone
+    sent_by_user_id : uuid
+    delivery_status : text
+    created_at : timestamp with time zone
+
+approvals
+    id : uuid
+    tenant_id : uuid
+    post_id : uuid
+    revision_id : uuid
+    content_hash : text
+    stage : public.approval_stage
+    decision : public.approval_decision
+    decided_by_user_id : uuid
+    decided_via_link_id : uuid
+    decided_at : timestamp with time zone
+    comment : text
+    created_at : timestamp with time zone
+
+listing_reviews
+    id : uuid
+    tenant_id : uuid
+    listing_id : uuid
+    external_id : text
+    author_name : text
+    rating : integer
+    body : text
+    reviewed_at : timestamp with time zone
+    reply_body : text
+    reply_sent_at : timestamp with time zone
+    reply_by : uuid
+    raw : jsonb
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+post_deliveries
+    id : uuid
+    tenant_id : uuid
+    post_id : uuid
+    revision_id : uuid
+    connection_id : uuid
+    network : public.social_network
+    status : public.delivery_status
+    dedup_key : text
+    attempts : integer
+    next_attempt_at : timestamp with time zone
+    lease_owner : text
+    lease_expires_at : timestamp with time zone
+    provider_post_id : text
+    provider_url : text
+    provider_published_at : timestamp with time zone
+    is_simulated : boolean
+    error_code : text
+    error_message : text
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+metric_definitions
+    metric_key : text
+    network : public.social_network
+    label : text
+    formula : text
+    description : text
+    is_cross_platform_safe : boolean
+
+tenant_settings
+    tenant_id : uuid
+    require_internal_review : boolean
+    require_client_review : boolean
+    separate_creator_reviewer : boolean
+    auto_pause_on_failures : integer
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+posts
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    campaign_id : uuid
+    status : public.post_status
+    title : text
+    tags : text[]
+    scheduled_at : timestamp with time zone
+    scheduled_local : timestamp without time zone
+    scheduled_tz : text
+    recurrence_rule : text
+    current_revision_id : uuid
+    created_by : uuid
+    cancelled_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+platform_admins
+    user_id : uuid
+    granted_by : uuid
+    granted_at : timestamp with time zone
+    note : text
+
+invitations
+    id : uuid
+    tenant_id : uuid
+    email : public.citext
+    role : public.member_role
+    token_hash : text
+    invited_by : uuid
+    expires_at : timestamp with time zone
+    accepted_at : timestamp with time zone
+    revoked_at : timestamp with time zone
+    created_at : timestamp with time zone
+
+listings
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    provider : text
+    external_id : text
+    name : text
+    address : text
+    phone : text
+    website_url : text
+    raw : jsonb
+    status : text
+    status_detail : text
+    is_simulated : boolean
+    last_synced_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+connections
+    id : uuid
+    tenant_id : uuid
+    brand_id : uuid
+    network : public.social_network
+    external_id : text
+    display_name : text
+    handle : text
+    avatar_url : text
+    account_type : text
+    access_token_enc : text
+    refresh_token_enc : text
+    token_expires_at : timestamp with time zone
+    scopes : text[]
+    status : public.connection_status
+    status_detail : text
+    last_health_check_at : timestamp with time zone
+    is_simulated : boolean
+    created_by : uuid
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+tenant_channels
+    tenant_id : uuid
+    bd_gateway_name : text
+    bd_gateway_sender_id : text
+    whatsapp_enabled : boolean
+    whatsapp_template : text
+    twilio_enabled : boolean
+    twilio_daily_cap_minor : bigint
+    twilio_alerted_at : timestamp with time zone
+    twilio_enabled_by : uuid
+    twilio_enabled_at : timestamp with time zone
+    created_at : timestamp with time zone
+    updated_at : timestamp with time zone
+
+message_log
+    id : bigint
+    tenant_id : uuid
+    channel : text
+    purpose : text
+    recipient_hash : text
+    status : text
+    cost_minor : bigint
+    currency : text
+    provider_ref : text
+    error : text
+    created_at : timestamp with time zone
