@@ -17,20 +17,35 @@ Section numbers below refer to that note.
 | 7 | Billing, regions, publish gate | §7, §7A | done |
 | 8 | Notifications | §11 Phase 1 | done |
 | 9 | BD + Global landing | §7A.1 | done |
+| 10 | Local database harness | §10 | done |
+| 11 | Cron jobs that admit failure | §9 | done |
+| 12 | Schema live on Supabase | §9, §10 | done |
+| 13 | Landing pages rebuilt | §7A.1 | done |
+| 14 | Calendar drag + dashboard chart | §6.2, §11 | done |
 
 Phase 1 is complete as code. Phase 2 (AI Planner, credit ledger, approvals,
 Self/MOTiF, LinkedIn + YouTube, analytics, transfers) and Phase 3 (TikTok, X,
 WhatsApp control) follow.
 
-**Before any of that, three things block launch and none of them is code:**
+**The schema is live on Supabase** (`koiimpnvaxadigwiuhbk`, ap-south-1,
+Postgres 17.6). Signup, the mirror trigger, RLS and the publish gate all work
+against it — see Module 12.
 
-1. The migrations have never run. Fourteen of them, written and reviewed by
-   reading only. `supabase db push` against a real Postgres is the single
-   highest-value thing left, and it needs no third-party credentials.
-2. No third-party credential exists — Meta, SSLCommerz or Resend — so no OAuth
-   round trip, no payment and no email has ever happened.
-3. Prices are placeholders, BD VAT is unconfirmed, and the legal pages have
+**Two things still block launch, and neither is code:**
+
+1. No Meta, SSLCommerz or Resend credential exists, so no OAuth round trip, no
+   payment and no real email has happened. Every other value in `.env.local` is
+   a working placeholder, and `CRON_SECRET` and the webhook tokens are real
+   random values.
+2. Prices are placeholders, BD VAT is unconfirmed, and the legal pages have
    not been near a lawyer.
+
+**The migrations have now run** — see `scripts/local-db`. The first item on
+this list used to be that they had never been executed anywhere.
+
+Note on `AUTH_JWT_SECRET`: it is now empty and unused on purpose. The new API
+key format is opaque, not a JWT signed with a project secret; tokens are
+verified against the project's JWKS endpoint instead.
 
 ## Decisions taken while building
 
@@ -734,3 +749,274 @@ all on the marketing copy's own rules. Both landing pages, both legal pages,
   version of `/bd` is the obvious next thing a Bangladeshi customer would want.
 - The contact addresses in the legal pages are `@motif.example` placeholders,
   and the company name and address the terms need do not exist yet.
+
+## Module 10 — the local database harness (done)
+
+The migrations had never been executed. There was no Docker on the build
+machine, so `supabase start` was out, and the hosted project's keys turn out to
+be stale — the service key is rejected with `Invalid API key`, and the
+`AUTH_JWT_SECRET` beside it does not sign that key, so neither can be trusted.
+Fourteen migrations and 2,819 lines of SQL were still resting on a careful read.
+
+**The dependency surface turned out to be tiny.** The migrations reference
+`pgcrypto`, `auth.uid()`, `auth.users`, `storage.objects`, `storage.buckets` and
+three roles. No `pg_cron`, no Vault, no Realtime. That is small enough to shim,
+which means a plain Postgres can run the whole schema — and a real Postgres 17
+installs as an npm dependency with no Docker and no administrator.
+
+`supabase/local-shim.sql` supplies those objects; `scripts/local-db` starts the
+cluster, applies the migrations, and checks the result. `npm run db:local` does
+all of it.
+
+### What ran
+
+All fourteen migrations applied cleanly on the first attempt, from an empty
+schema: 27 tables (RLS enabled on every one), 30 functions, 48 policies, 28
+triggers, 16 enums, 84 indexes, six seeded plans. The heavy SQL that had most
+needed executing — `for update ... skip locked` and the data-modifying CTE in
+0012, the security-definer functions and cursor loop in 0013, the cross-table
+after-insert trigger in 0014 — all work.
+
+### Two things the database caught
+
+1. **The hand-written types had drifted by one column.** `whatsapp_links.otp_hash`
+   exists in 0007 and was missing from `WhatsappLinkRow`. One column out of 27
+   tables is a good showing for 633 lines written by hand, but it is exactly the
+   error that kind of file accumulates, so `db:local:verify` now compares every
+   column, nullability and enum member against the live schema on demand.
+2. **The cron routes cannot tell a dead database from an idle one.** With the
+   Supabase key rejected, `/api/cron/publish` answers
+   `{"ok":true,"claimed":0,...}` — a clean 200 with tidy zeros — while
+   `[publish] claim failed: Invalid API key` goes to the log. `claimDueTargets`
+   logs and returns `[]`, which is indistinguishable from "nothing due". Vercel
+   cron monitoring watches the response, so this would look healthy forever
+   while nothing published. **Fixed in Module 11.**
+
+### Verified
+
+`npm run db:local` end to end: migrations applied, 27 tables and 16 enums
+matching `database.ts` with zero drift, and 24 rule assertions passing — the
+cross-workspace account block, the past-date reject, the idempotency key, the
+publishing edit lock, the last-owner guard and the billing-region lock all
+refuse what Sections 6 and 7A say they should. `build`, `typecheck`, `lint` and
+146 tests still clean. All 35 routes served by `next start`: public pages 200,
+every gated route 307 to `/login`, cron routes 401 without the secret and 200
+with it.
+
+### Not verified
+
+- **This is not Supabase.** No PostgREST, no GoTrue, no Storage, so nothing
+  proves an RLS policy denies the right person — only that the policies parse
+  and plan. The app cannot talk to this cluster at all.
+- The 48 policies were checked for existence, not behaviour. Setting
+  `request.jwt.claims` and asserting each policy's decision is the obvious next
+  use of this harness and is not written.
+- Postgres 17.10 here; confirm the hosted project's version before trusting
+  this as a rehearsal for `supabase db push`.
+
+
+## Module 11 — cron jobs that admit failure (done)
+
+Module 10 caught it: with the database unreachable, every one of the four cron
+routes answered `{"ok":true, ...zeros}` with HTTP 200. The errors went to
+`console.error` and nowhere else. Vercel Cron's monitoring watches the
+response, so the jobs would have reported a healthy minute, every minute, for
+as long as the outage lasted — while nothing published, no email went out and
+no subscription lapsed into grace.
+
+The cause was one habit repeated in five files: a failed Supabase query and an
+empty result are both falsy, and every call site collapsed them. `const { data }
+= await admin.from(...)` with no `error` binding cannot tell "nothing is due"
+from "the table could not be read".
+
+**The shape of the fix.** A tick now carries `degraded: string[]` — the queries
+it could not run. `cronResult()` in `lib/cron.ts` answers 200 with `ok: true`
+when that list is empty and 503 with `ok: false` when it is not, so a failing
+job looks like a failing job to anything watching. The counts stay in the body
+either way, because "what did we manage" is still worth reporting.
+
+- `claimDueTargets` and `reapStuckTargets` return `null` for "did not run",
+  distinct from `[]` and `0`. A null claim ends the tick rather than reporting
+  zero published.
+- `runNotificationTick` records the exhaust sweep and the claim separately.
+- The billing sweep gained `rowsOrDegrade`, because all six of its steps began
+  by reading a list and discarding the error. That was the largest concentration
+  of the bug: a whole sweep could silently do nothing.
+- `refreshExpiringTokens` returns early rather than letting an unreadable
+  `social_accounts` pass for "no tokens are expiring" — the one outcome that job
+  exists to prevent.
+
+### Verified
+
+Against the live Supabase project, with valid keys and the schema not yet
+pushed, all four routes now answer **503** and name what failed:
+
+```
+publish        degraded: reap_stuck_targets, claim_due_targets
+notifications  degraded: fail_exhausted_deliveries, claim_notification_deliveries
+billing        degraded: raiseRenewals, sendReminders, moveOverdueToPastDue,
+                         endGracePeriods, releaseLapsedSeats, closeStalePayments,
+                         expire_lapsed_ai_grants
+refresh-tokens degraded: social_accounts, purge_expired_oauth_sessions
+```
+
+`typecheck`, `lint`, `build` and 146 tests clean.
+
+### Not verified
+
+No test asserts the degraded path. It was proven by pointing the app at a
+project without the schema, which is a real reproduction but not a repeatable
+one — the obvious next step is a unit test per tick with a failing client.
+
+### Known gap
+
+The inner queries of the billing sweep — the per-row invoice and notification
+writes inside each loop — still discard their errors. A sweep that reads its
+list successfully and then fails on every write still reports `ok: true` with
+`invoicesRaised: 0`. The list queries were fixed because they decide whether
+work happens at all; the writes want the same treatment.
+
+
+## Module 12 — the schema on real Supabase (done)
+
+The project was reachable and the keys were valid; what was missing was the
+database password, and with it the whole push became possible.
+
+**Three things had to be discovered first.**
+
+1. **There is no direct database host any more.** `db.<ref>.supabase.co` does
+   not resolve for this project — new projects are pooler-only. Migrations go
+   through `aws-0-ap-south-1.pooler.supabase.com:5432`, session mode. Port 6543
+   is transaction mode and would break multi-statement migration files.
+2. **The project held someone else's application** — 46 tables, 56 functions,
+   `tenants` / `brands` / `listings` / `conversations`. `auth.users` had zero
+   rows, so no real account was ever created against it, but it was not this
+   codebase. Its structure is saved in `.local-db/old-schema-columns.txt`
+   before the wipe.
+3. **The default privileges were wrong, and this is the one the local harness
+   could never have caught.** None of the migrations grants table privileges to
+   `anon` or `authenticated` — 0008 only revokes a table-wide SELECT and grants
+   specific columns back, which assumes the grant already exists. On Supabase
+   that assumption rests on a default ACL, and this project's `postgres`
+   default ACL had been narrowed to `postgres, service_role`. Pushed as-is,
+   every table would have landed unreadable by the app, with RLS never getting
+   a say. `scripts/remote/push.mjs` sets Supabase's standard default privileges
+   before the first `create table`, so 0008's revokes still land last.
+
+   The local harness missed it because migrations there run as superuser, where
+   grants are irrelevant. A rehearsal that cannot fail on permissions does not
+   test permissions.
+
+### What is now true
+
+All 14 migrations applied to the live project in one pass: 27 tables, 30
+functions, the `on_auth_user_created` trigger on `auth.users`, the `post-media`
+bucket and its four storage policies, six seeded plans.
+
+Verified through the real HTTP API, with real keys, as a real user:
+
+- `npm run check:supabase` — 27 tables, 6 plans, and the anon key seeing no
+  workspaces.
+- `npm run db:remote:walk` — 11 assertions. A new user is mirrored into
+  `public.users` by trigger and starts at `verify_email`; a password login
+  returns a session; that session reads its own row and **only** its own row;
+  and `social_accounts.access_token_encrypted` is **refused with 403** to an
+  ordinary signed-in user. That last one is the column-grant privacy rule from
+  Module 1 finally proven end to end — it could not be tested locally.
+- All four cron routes answer 200 with `degraded: []`. Twenty minutes earlier
+  the same code answered 503, which is what makes the zeros trustworthy.
+- The BD landing page renders **BDT 499 / 899 / 1,499 from the database**. Every
+  previous render of that page was the "prices are not loading" fallback.
+
+### Two findings about GoTrue worth keeping
+
+- **It refuses any domain with no MX record.** `@motif.test` and
+  `@example.com` are both rejected as `email_address_invalid`, so no reserved
+  test domain can sign up. Real users at a misspelled or dead domain are
+  rejected before the app sees them — good, but the signup form should say so
+  clearly rather than showing a generic failure.
+- **The built-in mailer rate-limits at a couple of sends per hour.**
+  `over_email_send_rate_limit` arrived after two attempts. That is a free-tier
+  limit on Supabase's shared SMTP, and it will affect real signups on launch
+  day. Configuring a real SMTP provider is a launch requirement, not a nicety.
+
+### Not verified
+
+- Nobody has driven the app through a browser. The data path is proven; the
+  screens are not. Signup, onboarding and the dashboard have been exercised
+  through the API, not by clicking.
+- Onboarding step 2 cannot complete: connecting a Facebook or Instagram account
+  needs real Meta credentials.
+- The old app's `media` storage bucket was left in place. It is unrelated to
+  this codebase and holds nothing we wrote.
+- `db:remote:push` bypasses `supabase link`, so the CLI's own migration history
+  is written by us rather than by the CLI. A later `supabase db push` should be
+  checked against it rather than trusted blindly.
+
+
+## Module 13 — the landing pages, rebuilt (done)
+
+Redrawn around the artwork, matching the design the owner pointed at: a
+full-bleed hero with the networks cross-fading behind the promise, then the
+networks band, a drawn dashboard, what it does, how a post gets out, what it
+refuses to do, plans, short answers, closing.
+
+**The copy is where this parts company with its model.** That page markets a
+unified inbox, analytics, ten networks, white label, an MCP server and SMS.
+This is Phase 1 — Facebook and Instagram, posts, calendar, queue, billing,
+notifications. So the four unbuilt networks carry a badge on the card, the chip
+and the caption, and `copy.ts` gained `networks`, `pillars` and `refusals`
+under the tests that already refuse a page quoting a price or offering a
+platform that does not work.
+
+Approvals and team invitations are marked **coming** even though their tables,
+roles and rules are all in the database. There is no screen for either, and a
+ready schema is not a feature.
+
+### Verified
+
+Both regions at desktop and phone width, through a real browser. Prices render
+from the database — BDT 499 / 899 / 1,499 and the USD equivalents.
+
+### Not verified
+
+Nobody has looked at these pages on a real phone. 504px was the narrowest
+viewport headless Chrome would give, because Windows clamps its minimum window
+width — which also produced a false "horizontal overflow" that cost an hour and
+a wrong fix before a probe measured `scrollWidth === clientWidth`.
+
+## Module 14 — a calendar you can drag, and a chart (done)
+
+**The calendar.** Posts are tiles that move between days, keeping their time of
+day; dropped onto another post, the two exchange days. Nothing saves on drop —
+a prompt offers Save or Undo all, and moves go as a batch because a swap is two
+moves that only make sense together. `publishing` and `published` do not lift.
+
+**The dashboard.** A views-and-interactions line chart, per post / per week /
+per month, grain in the query string. One shared axis on purpose: interactions
+are a subset of views, and a second axis would make a 4% engagement rate look
+like 90%.
+
+**The figures are illustrative and the card says so.** No metrics table exists,
+nothing records a view, no connection is live. Real: the buckets are the
+workspace's own posts on their real dates in its own timezone, seeded from post
+ids so a screenshot stays true. `readEngagement` is the only function that
+changes when metrics arrive.
+
+### Three bugs the browser driver found that reading did not
+
+1. `details.valueAsString[0]` is locale-formatted, not ISO, so picking a date
+   threw `RangeError: Invalid time value`.
+2. `formatTimeInZone` returns "11:00 am"; splitting on a colon gave NaN
+   minutes, so **no post chip ever rendered** — while the month grid above it
+   looked perfect, which is what made it invisible.
+3. An auto-scroll that appeared to work was reading the mount value. Two layout
+   faults under it: `offsetTop` measured against the wrong ancestor, and the
+   effect running before the rows had their new height.
+
+All three were in code that had passed typecheck, lint and a screenshot.
+
+### Not verified
+
+The flip, drag and tilt of `FlipCard`, and the spotlight following a real
+cursor. Headless can dispatch events but cannot move a mouse.
