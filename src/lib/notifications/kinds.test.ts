@@ -13,19 +13,72 @@ import { atLeast, ROLES } from '../constants.ts'
 // --- categories -------------------------------------------------------------
 
 test('every kind the app writes today is categorised', () => {
-  // The kinds actually inserted by Modules 4, 6 and 7.
+  // The kinds actually inserted somewhere in the codebase. Kept in step by
+  // hand, because the alternative — deriving it — would only prove the map
+  // agrees with itself. A kind added without a category silently becomes
+  // 'publishing' and is emailed to editors, which is how the wrong people
+  // start being told about the wrong things.
   const written: Record<string, string> = {
     post_published: 'publishing',
     post_failed: 'publishing',
+    post_scheduled: 'publishing',
+    post_publishing: 'publishing',
+    post_rescheduled: 'publishing',
+    post_cancelled: 'publishing',
+    post_removed: 'publishing',
+    post_deleted: 'publishing',
+    approval_requested: 'team',
     needs_reconnect: 'connections',
+    account_connected: 'connections',
+    account_disconnected: 'connections',
     payment_due: 'billing',
     payment_failed: 'billing',
     payment_succeeded: 'billing',
+    member_invited: 'team',
+    member_joined: 'team',
+    member_removed: 'team',
+    member_role_changed: 'team',
+    invite_revoked: 'team',
   }
 
   for (const [kind, expected] of Object.entries(written)) {
     assert.equal(categoryOf(kind), expected, kind)
   }
+})
+
+/**
+ * The bell shows everything; only email is filtered by role.
+ *
+ * Worth stating as a test, because `minimumRoleFor` reads like an access
+ * control and is not one — `notifications_select_own` gives every member of a
+ * workspace every unaddressed notification in it. An editor sees "Rina is now
+ * admin" in the panel and is not emailed about it, and that is the design:
+ * Section 6.3 splits work across people, and people cannot coordinate around
+ * changes they are not shown.
+ */
+test('team changes are in-app for everyone and emailed only to admins', () => {
+  for (const kind of ['member_invited', 'member_joined', 'member_role_changed']) {
+    assert.equal(categoryOf(kind), 'team', kind)
+  }
+  assert.equal(minimumRoleFor('team'), 'admin')
+})
+
+test('routine confirmations are shown but not emailed', () => {
+  assert.equal(emailWorthy('post_published'), false)
+  assert.equal(emailWorthy('account_connected'), false)
+  assert.equal(emailWorthy('invite_revoked'), false)
+  assert.equal(emailWorthy('post_scheduled'), false)
+  assert.equal(emailWorthy('post_cancelled'), false)
+  assert.equal(emailWorthy('post_rescheduled'), false)
+
+  // The ones that are somebody needing to act, or to know.
+  assert.equal(emailWorthy('post_failed'), true)
+  assert.equal(emailWorthy('member_removed'), true)
+  assert.equal(emailWorthy('account_disconnected'), true)
+  // A draft deleted for good, and a post waiting on somebody, are both worth
+  // an interruption: one cannot be undone and the other blocks the calendar.
+  assert.equal(emailWorthy('post_deleted'), true)
+  assert.equal(emailWorthy('approval_requested'), true)
 })
 
 test('an unrecognised kind falls back rather than disappearing', () => {

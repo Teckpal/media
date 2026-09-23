@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import { cookies, headers } from 'next/headers'
 import { Landing } from '@/components/marketing/landing'
 import { GLOBAL_COPY } from '@/lib/marketing/copy'
-import { isSignedIn } from '@/lib/marketing/visitor'
 import { REGION_COOKIE, readRegionHint } from '@/lib/region'
 
 /**
@@ -30,11 +29,9 @@ export const metadata: Metadata = {
 }
 
 export default async function GlobalLandingPage() {
-  const [signedIn, cookieStore, headerList] = await Promise.all([
-    isSignedIn(),
-    cookies(),
-    headers(),
-  ])
+  // The landing no longer behaves differently for a signed-in visitor: it
+  // always offers Log in, and `/login` decides what to do with a session.
+  const [cookieStore, headerList] = await Promise.all([cookies(), headers()])
 
   const hint = readRegionHint(
     cookieStore.get(REGION_COOKIE)?.value,
@@ -45,7 +42,6 @@ export default async function GlobalLandingPage() {
     <Landing
       copy={GLOBAL_COPY}
       suggestOtherRegion={hint === 'bd'}
-      signedIn={signedIn}
     />
   )
 }

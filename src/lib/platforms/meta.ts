@@ -352,6 +352,15 @@ class MetaAdapter implements PlatformAdapter {
       )
     }
 
+    // Who is connecting, app-scoped. Meta's data-deletion callback names this
+    // id and nothing else, so without it a verified deletion request could be
+    // acted on for nobody in particular.
+    const me = await graph<{ id?: string }>(
+      `${graphBase()}/me?` +
+        new URLSearchParams({ access_token: token.accessToken, fields: 'id' }),
+      'reading the connecting user',
+    )
+
     const body = await graph<{
       data?: {
         id: string
@@ -393,6 +402,7 @@ class MetaAdapter implements PlatformAdapter {
         displayName: page.name,
         avatarUrl: page.picture?.data?.url,
         accountType: 'page',
+        connectedExternalUserId: me.id,
         // Page tokens derived from a long-lived user token do not expire, so
         // no expiresAt. The refresh cron watches the user token instead.
         accessToken: page.access_token,
@@ -410,6 +420,7 @@ class MetaAdapter implements PlatformAdapter {
           username: ig.username,
           avatarUrl: ig.profile_picture_url,
           accountType: 'business',
+          connectedExternalUserId: me.id,
           // Instagram publishes through the Page, with the Page's token.
           parentExternalId: page.id,
           accessToken: page.access_token,

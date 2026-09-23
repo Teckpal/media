@@ -18,13 +18,17 @@ function Submit() {
   )
 }
 
-export function LoginForm() {
+export function LoginForm({ next }: { next?: string }) {
   const [state, action] = useActionState(signInAction, EMPTY_AUTH_STATE)
   const fieldErrors = state.fieldErrors ?? {}
 
   return (
     <form action={action} className="space-y-4">
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
+
+      {/* Where they were headed before being asked to sign in. Validated again
+          in the action — a hidden field is a suggestion, not a fact. */}
+      {next ? <input type="hidden" name="next" value={next} /> : null}
 
       <Field label="Email" htmlFor="email" error={fieldErrors.email}>
         <Input

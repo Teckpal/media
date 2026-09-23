@@ -22,15 +22,13 @@ export function Landing({
   copy,
   /** Shown when the visitor's IP suggests the *other* page. Never a redirect. */
   suggestOtherRegion,
-  signedIn,
 }: {
   copy: RegionCopy
   suggestOtherRegion: boolean
-  signedIn: boolean
 }) {
   return (
     <div className="bg-[var(--night)]">
-      <Hero copy={copy} signedIn={signedIn} suggestOtherRegion={suggestOtherRegion} />
+      <Hero copy={copy} suggestOtherRegion={suggestOtherRegion} />
 
       <Networks networks={copy.networks} />
       <DashboardPreview />
@@ -83,10 +81,10 @@ export function Landing({
 
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href={signedIn ? '/dashboard' : copy.hero.primaryCta.href}
+              href={copy.hero.primaryCta.href}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-white px-6 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
             >
-              {signedIn ? 'Go to your dashboard' : copy.hero.primaryCta.label}
+              {copy.hero.primaryCta.label}
               <ArrowRight className="size-4" aria-hidden />
             </Link>
 

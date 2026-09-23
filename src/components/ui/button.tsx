@@ -10,7 +10,18 @@ const VARIANTS: Record<Variant, string> = {
   secondary:
     'bg-surface text-foreground border border-border hover:bg-surface-muted',
   ghost: 'text-foreground hover:bg-surface-muted',
-  danger: 'bg-danger text-danger-foreground hover:opacity-90',
+  /**
+   * Outlined, not filled.
+   *
+   * The product's accent and its error colour are the same red, which is what
+   * the design asks for — and a filled destructive button would then be pixel
+   * for pixel a primary one. "Disconnect" and "Save" must not look alike; the
+   * label is not enough when the shape and the colour already agree.
+   *
+   * Outlining also puts the weight where it belongs. A destructive action is
+   * not the thing on a screen that should draw the eye first.
+   */
+  danger: 'bg-surface text-danger border border-danger/40 hover:bg-danger-subtle',
 }
 
 const SIZES: Record<Size, string> = {

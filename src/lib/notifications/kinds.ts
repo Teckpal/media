@@ -39,10 +39,25 @@ const CATEGORY_BY_KIND: Record<string, NotificationCategory> = {
   payment_failed: 'billing',
   payment_succeeded: 'billing',
   credits_low: 'billing',
-  // Phase 2
+  // Module 4, the rest of it
+  account_connected: 'connections',
+  account_disconnected: 'connections',
+  // Section 6.2, the rest of a post's life
+  post_scheduled: 'publishing',
+  post_publishing: 'publishing',
+  post_rescheduled: 'publishing',
+  post_cancelled: 'publishing',
+  /** Removed from the app; still live on the platform. */
+  post_removed: 'publishing',
+  /** A draft, gone for good. The only real delete in the product. */
+  post_deleted: 'publishing',
+  // Section 6.3
   approval_requested: 'team',
   member_invited: 'team',
+  member_joined: 'team',
   member_removed: 'team',
+  member_role_changed: 'team',
+  invite_revoked: 'team',
 }
 
 /**
@@ -89,7 +104,22 @@ export function minimumRoleFor(category: NotificationCategory): Role {
  * The notification is still created, still shown, still counted on the bell.
  * Only the email is withheld.
  */
-const IN_APP_ONLY = new Set(['post_published'])
+const IN_APP_ONLY = new Set([
+  'post_published',
+  // Routine, and frequent. Connecting an account is something the person
+  // doing it is already looking at, and an invitation being withdrawn is a
+  // correction rather than news.
+  'account_connected',
+  'invite_revoked',
+  // A busy workspace schedules all day. These belong on the bell, where they
+  // are a record of what the team is doing, and not in an inbox — the whole
+  // reason `post_published` was in-app only in the first place.
+  'post_scheduled',
+  'post_publishing',
+  'post_cancelled',
+  // Dragging the calendar about is the most repetitive action in the product.
+  'post_rescheduled',
+])
 
 export function emailWorthy(kind: string): boolean {
   return !IN_APP_ONLY.has(kind)

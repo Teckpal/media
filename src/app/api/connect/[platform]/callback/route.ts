@@ -53,7 +53,11 @@ export async function GET(
   }
 
   try {
-    const token = await adapter.exchangeCode(code, redirectUriFor(platform, origin))
+    const token = await adapter.exchangeCode(
+      code,
+      redirectUriFor(platform, origin),
+      state.codeVerifier,
+    )
 
     // Throws 'missing_permissions' on a partial grant and 'wrong_account_type'
     // when there is nothing publishable behind the account. Called here, before

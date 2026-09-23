@@ -15,16 +15,23 @@ const HERO_BUTTON =
  */
 export function Hero({
   copy,
-  signedIn,
   suggestOtherRegion,
 }: {
   copy: RegionCopy
-  signedIn: boolean
   /** The visitor's IP suggests the other page. A nudge, never a redirect. */
   suggestOtherRegion: boolean
 }) {
-  const primaryHref = signedIn ? '/dashboard' : copy.hero.primaryCta.href
-  const primaryLabel = signedIn ? 'Go to your dashboard' : copy.hero.primaryCta.label
+  /*
+   * The landing does not short-circuit to the dashboard any more.
+   *
+   * It used to swap these for "Go to your dashboard" whenever a session
+   * existed, which meant somebody with a stale cookie could never reach the
+   * login page from here at all — the front door quietly stopped being a door.
+   * Signing in is now always one deliberate step, and `/login` is where it
+   * happens.
+   */
+  const primaryHref = copy.hero.primaryCta.href
+  const primaryLabel = copy.hero.primaryCta.label
 
   return (
     <section className="relative isolate min-h-[42rem] overflow-hidden bg-[var(--night)]">

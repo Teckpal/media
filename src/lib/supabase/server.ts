@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
 import { publicEnv } from '@/lib/env'
+import { sessionScoped } from '@/lib/supabase/cookie-options'
 import type { Database } from '@/types/database'
 
 /**
@@ -22,7 +23,7 @@ export async function createClient() {
         setAll(cookiesToSet) {
           try {
             for (const { name, value, options } of cookiesToSet) {
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, sessionScoped(options))
             }
           } catch {
             // Called from a Server Component, where cookies are read-only.

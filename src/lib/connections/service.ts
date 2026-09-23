@@ -3,7 +3,9 @@ import 'server-only'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { accountTokenContext, encryptToken } from '@/lib/crypto/tokens'
 import type { DiscoveredAccount } from '@/lib/platforms/types'
-import type { Platform } from '@/lib/constants'
+import { PLATFORM_LABELS, type Platform } from '@/lib/constants'
+import { announce } from '@/lib/notifications/announce'
+import { ROUTES } from '@/lib/routes'
 
 /** Postgres unique-violation. */
 const UNIQUE_VIOLATION = '23505'
@@ -106,6 +108,9 @@ export async function claimAccount(params: {
       workspace_id: workspaceId,
       platform,
       external_account_id: account.externalAccountId,
+      // Who connected it, in the platform's own terms. The only thing a
+      // provider-initiated deletion request can be matched against.
+      connected_external_user_id: account.connectedExternalUserId ?? null,
       ...descriptiveFields,
       ...tokenFields,
       status: 'active',
@@ -134,6 +139,16 @@ export async function claimAccount(params: {
     detail: { platform, external_account_id: account.externalAccountId },
   })
 
+  await announce({
+    workspaceId,
+    actorId: userId,
+    kind: 'account_connected',
+    title: `${PLATFORM_LABELS[platform]} connected`,
+    body: `${account.displayName} can now be published to.`,
+    linkPath: ROUTES.connections,
+    detail: { platform, social_account_id: created.id },
+  })
+
   return { outcome: 'connected', accountId: created.id }
 }
 
@@ -159,10 +174,12 @@ export async function deactivateAccount(params: {
   const { accountId, workspaceId, actorId, status, reason } = params
   const admin = createAdminClient()
 
-  await admin
+  const { data: account } = await admin
     .from('social_accounts')
     .update({ status, status_reason: reason })
     .eq('id', accountId)
+    .select('platform, account_name')
+    .maybeSingle<{ platform: Platform; account_name: string }>()
 
   const pausedPosts = await pauseSchedulesFor(accountId)
 
@@ -175,6 +192,27 @@ export async function deactivateAccount(params: {
     source: params.source ?? 'web',
     detail: { reason, paused_posts: pausedPosts },
   })
+
+  // Only the deliberate case. `needs_reconnect` already produces its own, more
+  // useful notification where it is detected — in the token refresher and in
+  // the publish worker, which know what broke. Announcing here as well would
+  // put two rows on the bell for one event.
+  if (status === 'disconnected') {
+    await announce({
+      workspaceId,
+      actorId,
+      kind: 'account_disconnected',
+      title: `${account ? PLATFORM_LABELS[account.platform] : 'An account'} was disconnected`,
+      body:
+        pausedPosts > 0
+          ? `${account?.account_name ?? 'The account'} is no longer connected. ${pausedPosts} scheduled ${
+              pausedPosts === 1 ? 'post is' : 'posts are'
+            } paused.`
+          : `${account?.account_name ?? 'The account'} is no longer connected.`,
+      linkPath: ROUTES.connections,
+      detail: { social_account_id: accountId, paused_posts: pausedPosts },
+    })
+  }
 
   return { pausedPosts }
 }

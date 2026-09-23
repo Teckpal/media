@@ -22,6 +22,8 @@ export type EngagementSeries = {
   totals: { views: number; interactions: number }
   /** True while the numbers are illustrative. Draw a badge when it is. */
   sample: boolean
+  /** The series could not be read at all — distinct from having no posts. */
+  unavailable?: boolean
 }
 
 export const GRAINS: { value: Grain; label: string }[] = [

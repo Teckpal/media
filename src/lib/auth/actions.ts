@@ -9,6 +9,9 @@ import { ROUTES } from '@/lib/routes'
 import { getSessionUser } from '@/lib/auth/session'
 import type { AuthFormState } from '@/lib/auth/form-state'
 import { fieldErrorsFrom } from '@/lib/forms'
+import { safeNext } from '@/lib/auth/safe-next'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { openAccess } from '@/lib/billing/open-access'
 
 const emailSchema = z.string().trim().toLowerCase().email('Enter a valid email address.')
 
@@ -55,6 +58,58 @@ export async function signUpAction(
   }
 
   const supabase = await createClient()
+
+  /**
+   * The verification bypass has to go around `signUp`, not after it.
+   *
+   * MEASURED. Relaxing our own gate was not enough, and neither was marking
+   * the address confirmed afterwards: with confirmations on, `signUp` tries to
+   * send the mail itself, and Supabase's built-in mailer allows about two
+   * messages an hour. The third signup of the hour failed with
+   *
+   *   "email rate limit exceeded"
+   *
+   * before any account existed at all. Nothing downstream can recover from
+   * that, because there is nothing to recover.
+   *
+   * So under OPEN_ACCESS the account is created with the service role and
+   * `email_confirm: true`. No mail is attempted, no rate limit applies, and a
+   * session follows immediately from an ordinary password sign-in. Removing
+   * the flag restores the real `signUp` path below with nothing else to undo —
+   * and by then there will be an SMTP provider for it to use.
+   */
+  if (openAccess()) {
+    const { error: createError } = await createAdminClient().auth.admin.createUser({
+      email: parsed.data.email,
+      password: parsed.data.password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: parsed.data.fullName,
+        signup_country: parsed.data.country ?? null,
+      },
+    })
+
+    // Deliberately the same sentence whether the address is taken or the call
+    // failed for another reason. Telling a stranger which of their guesses
+    // already has an account is the thing the normal path avoids too.
+    if (createError) {
+      return { error: 'That email could not be used. Try another, or sign in.' }
+    }
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: parsed.data.email,
+      password: parsed.data.password,
+    })
+
+    if (signInError) {
+      // The account exists; only the session did not. Sending them to the
+      // login form is honest and works.
+      return { error: 'Your account is ready. Sign in to continue.' }
+    }
+
+    redirect(ROUTES.onboarding.chooseModule)
+  }
+
   const { error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
@@ -100,10 +155,20 @@ export async function signInAction(
     return { error: 'That email and password do not match.' }
   }
 
-  // Section 4: the router decides where a signed-in user actually lands.
-  // `/dashboard` is a request, not a destination — the gate on that route
-  // sends them to verification, the saved onboarding step, or reconnect.
-  redirect(ROUTES.dashboard)
+  /**
+   * Back to whatever they were trying to reach, if it was anywhere.
+   *
+   * An invitation link sends a signed-out visitor here with `?next=/invite/...`
+   * — and this used to drop it, landing them on the dashboard with the
+   * invitation unredeemed and no sign of what had happened. `safeNext` refuses
+   * anything that is not a path on this site, because a login that forwards
+   * wherever it is told is an open redirect.
+   *
+   * Section 4 still decides the rest: `/dashboard` is a request, not a
+   * destination, and the gate on that route sends them to verification, the
+   * saved onboarding step, or reconnect.
+   */
+  redirect(safeNext(formData.get('next'), ROUTES.dashboard))
 }
 
 export async function signOutAction(): Promise<void> {

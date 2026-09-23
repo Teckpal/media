@@ -187,6 +187,93 @@ if (deliveries.length) {
   bad('notification fan-out', 'no notification_deliveries rows were created')
 }
 
+// --- what a new member may read -----------------------------------------------
+console.log('\n--- notifications and the join date ---')
+
+/**
+ * An invitation grants a role from the day it is accepted. It is not a key to
+ * the archive — so a member sees the workspace's notifications from their
+ * `joined_at` onwards, and the ones addressed to them personally whenever they
+ * were written.
+ *
+ * Checked through RLS as each user, because the rule lives in a policy and a
+ * policy is only real if the database applies it.
+ */
+async function asMember(uid, sql, params = []) {
+  await client.query('begin')
+  await client.query(`select set_config('request.jwt.claims', $1, true)`, [
+    JSON.stringify({ sub: uid, role: 'authenticated' }),
+  ])
+  await client.query('set local role authenticated')
+  const { rows } = await client.query(sql, params)
+  await client.query('rollback')
+  return rows
+}
+
+// The owner was here first; the editor joined an hour ago. Both dates are set
+// explicitly — the seed gives every membership `now()`, so without this the
+// owner would also postdate the backdated notification below and the test
+// would be asserting something that is not the rule.
+await client.query(
+  `update public.workspace_members
+      set joined_at = case when user_id = $2 then now() - interval '3 days'
+                                             else now() - interval '1 hour' end
+    where workspace_id = $1`,
+  [ws.id, owner.id],
+)
+
+await client.query(
+  `insert into public.notifications (workspace_id, user_id, kind, title, created_at) values
+     ($1, null, 'post_published', 'before-she-joined', now() - interval '2 hours'),
+     ($1, null, 'post_published', 'after-she-joined',  now()),
+     ($1, $2,   'post_failed',    'addressed-to-her',  now() - interval '3 hours')`,
+  [ws.id, editor.id],
+)
+
+const seen = (
+  await asMember(editor.id, 'select title from public.notifications where workspace_id = $1', [
+    ws.id,
+  ])
+).map((r) => r.title)
+
+if (seen.includes('before-she-joined')) {
+  bad(
+    'a member cannot read notifications from before they joined',
+    'the workspace history was visible to somebody who was not there for it',
+  )
+} else {
+  ok('a member cannot read notifications from before they joined')
+}
+
+if (seen.includes('after-she-joined')) ok('a member reads what happened after they joined')
+else bad('a member reads what happened after they joined', 'the notification was hidden')
+
+if (seen.includes('addressed-to-her')) {
+  ok('a notification addressed to a member is theirs whenever it was written')
+} else {
+  bad(
+    'a notification addressed to a member is theirs whenever it was written',
+    'a personally addressed notification was hidden by the join date',
+  )
+}
+
+const ownerSees = (
+  await asMember(owner.id, 'select title from public.notifications where workspace_id = $1', [
+    ws.id,
+  ])
+).map((r) => r.title)
+
+if (ownerSees.includes('before-she-joined')) ok('the earlier member still reads the whole history')
+else bad('the earlier member still reads the whole history', 'the owner lost rows they should see')
+
+// The bell has its own definition of the same question, so it is checked too:
+// a count including rows the list cannot show would put a number on the bell
+// that leads to an empty panel.
+const bell = (await asMember(editor.id, 'select public.unread_notification_count($1) as n', [ws.id]))[0].n
+
+if (bell === seen.length) ok('the bell counts exactly what the panel can show', `n = ${bell}`)
+else bad('the bell counts exactly what the panel can show', `bell says ${bell}, panel has ${seen.length}`)
+
 console.log(`\n${passed} passed, ${failed} failed`)
 await client.end()
 process.exit(failed ? 1 : 0)

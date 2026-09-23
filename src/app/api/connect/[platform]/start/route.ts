@@ -5,6 +5,8 @@ import { adapterFor, isSupported } from '@/lib/platforms'
 import { beginOAuth } from '@/lib/platforms/oauth-state'
 import { ROUTES } from '@/lib/routes'
 import { redirectUriFor } from '@/lib/platforms/redirect'
+import { challengeFor, createVerifier } from '@/lib/platforms/pkce'
+import { openAccess } from '@/lib/billing/open-access'
 
 /**
  * Starts an OAuth connection.
@@ -21,7 +23,12 @@ export async function GET(
 
   const user = await getSessionUser()
   if (!user) return NextResponse.redirect(`${origin}${ROUTES.login}`)
-  if (!user.emailVerified) return NextResponse.redirect(`${origin}${ROUTES.verifyEmail}`)
+  // Section 5, rule 2 puts verification before OAuth. Bypassed under
+  // OPEN_ACCESS along with the rest of the verification gate, so a signup can
+  // reach the thing it signed up for while no mailer exists.
+  if (!user.emailVerified && !openAccess()) {
+    return NextResponse.redirect(`${origin}${ROUTES.verifyEmail}`)
+  }
 
   const workspaceId = user.profile.active_workspace_id
   if (!workspaceId) return NextResponse.redirect(`${origin}${ROUTES.onboarding.setup}`)
@@ -54,17 +61,23 @@ export async function GET(
       ? ROUTES.onboarding.connect
       : ROUTES.connections
 
+  // Minted before the cookie is written, because the verifier has to be stored
+  // alongside the nonce — the callback has no other way to recover it.
+  const codeVerifier = adapter.usesPkce ? createVerifier() : undefined
+
   const nonce = await beginOAuth({
     platform,
     workspaceId,
     userId: user.id,
     returnTo,
+    codeVerifier,
   })
 
   try {
     const url = adapter.buildAuthUrl({
       redirectUri: redirectUriFor(platform, origin),
       state: nonce,
+      codeChallenge: codeVerifier ? challengeFor(codeVerifier) : undefined,
     })
     return NextResponse.redirect(url)
   } catch {

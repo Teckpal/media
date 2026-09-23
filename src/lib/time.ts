@@ -161,6 +161,29 @@ export function monthRangeUtc(
   return { start: new Date(start.getTime()), end: new Date(end.getTime()) }
 }
 
+/**
+ * The UTC span covering a run of days in `timeZone`, starting at `dayKey`.
+ *
+ * The week view's version of `monthRangeUtc`, and it exists for the same
+ * reason: a day in Dhaka begins six hours before a day in UTC, so a query
+ * written over UTC days files a 00:30 post into the previous column.
+ *
+ * `dayKey` is `YYYY-MM-DD`. `days` is how many to cover — 7 for a week, 1 for
+ * a day.
+ */
+export function dayRangeUtc(
+  dayKey: string,
+  days: number,
+  timeZone: string,
+): { start: Date; end: Date } {
+  const [year, month, day] = dayKey.split('-').map(Number)
+
+  const start = new TZDate(year, month - 1, day, 0, 0, 0, 0, timeZone)
+  const end = new TZDate(year, month - 1, day + days, 0, 0, 0, 0, timeZone)
+
+  return { start: new Date(start.getTime()), end: new Date(end.getTime()) }
+}
+
 /** The zone's own idea of today, as `YYYY-MM-DD`. */
 export function todayInZone(timeZone: string, now = new Date()): string {
   return dayKeyInZone(now, timeZone)

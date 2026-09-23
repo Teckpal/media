@@ -2,14 +2,17 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { AlertTriangle, CheckCircle2, Plug, RefreshCw } from 'lucide-react'
 import { DisconnectForm } from './disconnect-form'
+import { DemoAccounts } from './demo-accounts'
 import { Alert } from '@/components/ui/alert'
 import { Card } from '@/components/ui/card'
 import { buttonStyles } from '@/components/ui/button'
 import { requireWorkspace } from '@/lib/auth/gate'
 import { createClient } from '@/lib/supabase/server'
-import { availablePlatforms } from '@/lib/platforms'
+import { availablePlatforms, isConfigured } from '@/lib/platforms'
 import { connectMessage } from '@/lib/connections/messages'
-import { PLATFORM_LABELS } from '@/lib/constants'
+import { PLATFORM_LABELS, PLATFORMS } from '@/lib/constants'
+import { openAccess } from '@/lib/billing/open-access'
+import { isDemoAccount } from '@/lib/connections/demo'
 import { ROUTES } from '@/lib/routes'
 import { atLeast } from '@/lib/constants'
 
@@ -27,7 +30,7 @@ export default async function ConnectionsPage({
   const { data: accounts } = await supabase
     .from('social_accounts')
     .select(
-      'id, platform, display_name, external_username, status, status_reason, paid_seat, connected_at',
+      'id, platform, account_type, display_name, external_username, status, status_reason, paid_seat, connected_at',
     )
     .eq('workspace_id', active.workspace.id)
     .in('status', ['active', 'needs_reconnect'])
@@ -35,7 +38,18 @@ export default async function ConnectionsPage({
 
   const connected = accounts ?? []
   const message = connectMessage((await searchParams).error)
+  // Every platform with an adapter, split by whether its credentials exist.
+  // A platform offered as a button that dies after the consent screen is
+  // worse than one that plainly says it is not ready.
   const platforms = availablePlatforms()
+  const ready = platforms.filter(isConfigured)
+  const pending = platforms.filter((platform) => !ready.includes(platform))
+
+  // Only platforms with nothing on them at all. The unique index refuses a
+  // second live claim either way, and a button whose only outcome is an error
+  // is a button that should not be offered.
+  const taken = new Set(connected.map((account) => account.platform))
+  const demoable = openAccess() ? PLATFORMS.filter((p) => !taken.has(p)) : []
 
   return (
     <div className="space-y-6">
@@ -90,6 +104,10 @@ export default async function ConnectionsPage({
                   <p className="truncate text-sm font-medium">{name}</p>
                   <p className="text-xs text-muted-foreground">
                     {PLATFORM_LABELS[account.platform]}
+                    {/* Said on every row it appears on. Somebody wondering why
+                        a post did not go out should find the answer here, not
+                        in the failure notice. */}
+                    {isDemoAccount(account) ? ' · demo, cannot publish' : null}
                     {healthy ? null : ' · needs reconnecting'}
                     {/* Section 7.1: the billing unit is the connected account,
                         so whether this one is paid for decides if it can
@@ -123,7 +141,7 @@ export default async function ConnectionsPage({
           <p className="text-sm font-medium">Add an account</p>
 
           <div className="flex flex-wrap gap-2">
-            {platforms.map((platform) => (
+            {ready.map((platform) => (
               <a
                 key={platform}
                 href={`/api/connect/${platform}/start`}
@@ -135,9 +153,26 @@ export default async function ConnectionsPage({
             ))}
           </div>
 
-          <p className="text-sm text-muted-foreground">
-            LinkedIn and YouTube follow, then TikTok and X.
-          </p>
+          <DemoAccounts available={demoable} />
+
+          {pending.length > 0 ? (
+            <div className="space-y-2 border-t border-border pt-3">
+              <p className="text-sm text-muted-foreground">
+                Built, waiting on the platform&rsquo;s own app credentials:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {pending.map((platform) => (
+                  <span
+                    key={platform}
+                    className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-dashed border-border px-3 py-1.5 text-sm text-muted-foreground"
+                  >
+                    <Plug className="size-4" aria-hidden />
+                    {PLATFORM_LABELS[platform]}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </Card>
       ) : (
         <p className="text-sm text-muted-foreground">

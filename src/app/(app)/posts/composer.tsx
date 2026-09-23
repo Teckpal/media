@@ -3,7 +3,7 @@
 import { useActionState, useMemo, useState } from 'react'
 import { MediaUploader, type ComposerMedia } from './media-uploader'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { Textarea } from '@/components/ui/textarea'
 import { Field, describedBy } from '@/components/ui/field'
 import { Alert } from '@/components/ui/alert'
@@ -11,7 +11,10 @@ import { Card } from '@/components/ui/card'
 import { savePostAction } from '@/lib/posts/actions'
 import { validatePost } from '@/lib/posts/validation'
 import { EMPTY_FORM_STATE } from '@/lib/forms'
+import { PreviewTabs } from '@/components/posts/preview-tabs'
+import { HashtagPicker } from '@/components/posts/hashtag-picker'
 import { PLATFORM_LABELS, type Platform } from '@/lib/constants'
+import type { HashtagProfile } from '@/lib/posts/hashtags'
 import { cn } from '@/lib/utils'
 
 export type TargetOption = {
@@ -42,15 +45,21 @@ export function Composer({
   canSchedule,
   scheduleBlockReason,
   mustReschedule,
+  today,
+  profile,
 }: {
   workspaceId: string
   timezone: string
+  /** The workspace's own today, `YYYY-MM-DD`. Read on the server, in its zone. */
+  today: string
   targets: TargetOption[]
   defaults: ComposerDefaults
   locked: boolean
   canSchedule: boolean
   scheduleBlockReason: string | null
   mustReschedule: boolean
+  /** Section 10's brand profile, for hashtag suggestions. Null until set up. */
+  profile: HashtagProfile | null
 }) {
   const [state, action, pending] = useActionState(savePostAction, EMPTY_FORM_STATE)
 
@@ -90,7 +99,19 @@ export function Composer({
   const blocked = errors.length > 0 || selected.length === 0
 
   return (
-    <form action={action} className="space-y-6">
+    /**
+     * Writing on the left, preview on the right.
+     *
+     * The preview's whole job is to be looked at *while* the caption is being
+     * typed — that is what makes a fold or a crop something you notice rather
+     * than something you find out about afterwards. Below the form it was a
+     * scroll away from the textarea, which is the same as not being there.
+     *
+     * One form still, not two columns of separate forms: every field below
+     * posts together, and the hidden inputs carrying media and accounts have to
+     * travel with them.
+     */
+    <form action={action} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start">
       {defaults.postId ? (
         <input type="hidden" name="postId" value={defaults.postId} />
       ) : null}
@@ -101,6 +122,7 @@ export function Composer({
         <input key={id} type="hidden" name="accountId" value={id} />
       ))}
 
+      <div className="min-w-0 space-y-6">
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
       {state.notice ? <Alert tone="success">{state.notice}</Alert> : null}
 
@@ -130,6 +152,23 @@ export function Composer({
           placeholder="What do you want to say?"
         />
       </Field>
+
+      <HashtagPicker
+        caption={caption}
+        platforms={chosenPlatforms}
+        profile={profile}
+        disabled={locked}
+        onAppend={(tag) =>
+          setCaption((current) => {
+            // Appended, never inserted at the cursor. A caption is prose and a
+            // tag block is not part of it; dropping #SpringCollection into the
+            // middle of a sentence is never what was meant.
+            const trimmed = current.replace(/\s+$/, '')
+            const separator = trimmed.length === 0 ? '' : trimmed.endsWith('#') ? '' : ' '
+            return `${trimmed}${separator}#${tag}`
+          })
+        }
+      />
 
       <div className="space-y-2">
         <p className="text-sm font-medium">Media</p>
@@ -211,15 +250,16 @@ export function Composer({
           hint={`Times are in ${timezone}. Leave empty to keep this as a draft.`}
           error={fieldErrors.scheduledLocal}
         >
-          <Input
+          <DateTimePicker
             id="scheduledLocal"
             name="scheduledLocal"
-            type="datetime-local"
             value={scheduledLocal}
-            onChange={(e) => setScheduledLocal(e.target.value)}
+            onChange={setScheduledLocal}
+            timeZone={timezone}
+            today={today}
             disabled={locked || !canSchedule}
-            aria-invalid={Boolean(fieldErrors.scheduledLocal)}
-            aria-describedby={describedBy('scheduledLocal', {
+            invalid={Boolean(fieldErrors.scheduledLocal)}
+            describedBy={describedBy('scheduledLocal', {
               error: fieldErrors.scheduledLocal,
               hint: true,
             })}
@@ -234,24 +274,40 @@ export function Composer({
           </Alert>
         ) : null}
 
+        {/* Three buttons, each a submit with its own name, because the name is
+            the instruction. An onClick that cleared the time field first would
+            not have re-rendered before the form posted, and the stale value
+            would go with it — so the server reads which button was pressed
+            instead of inferring intent from the fields. */}
         <div className="flex flex-wrap gap-2">
           <Button type="submit" size="lg" disabled={locked || pending || blocked}>
-            {pending
-              ? 'Saving…'
-              : scheduledLocal
-                ? 'Schedule'
-                : 'Save draft'}
+            {pending ? 'Saving…' : scheduledLocal ? 'Schedule' : 'Save draft'}
           </Button>
 
-          {/* A submit with its own name, not an onClick that clears state —
-              React would not have re-rendered before the form was posted, so
-              the old time would go with it. The server reads this instead. */}
+          {/* Straight out, no time chosen. The server treats it as a schedule
+              of zero length, so it meets the same publish gate, the same
+              per-platform validation and the same approvals rule — the button
+              is a shortcut, never a way round any of them. */}
+          <Button
+            type="submit"
+            name="publishNow"
+            value="1"
+            variant="secondary"
+            size="lg"
+            disabled={locked || pending || blocked || !canSchedule}
+            title={
+              canSchedule ? undefined : (scheduleBlockReason ?? 'Publishing is locked.')
+            }
+          >
+            Post now
+          </Button>
+
           {scheduledLocal ? (
             <Button
               type="submit"
               name="saveAsDraft"
               value="1"
-              variant="secondary"
+              variant="ghost"
               size="lg"
               disabled={locked || pending || blocked}
             >
@@ -260,6 +316,21 @@ export function Composer({
           ) : null}
         </div>
       </Card>
+      </div>
+
+      {/* Sticky, so it stays beside the caption however far the form is
+          scrolled. On a narrow screen the grid collapses and this simply
+          follows the fields, which is the only place it can go. */}
+      <div className="lg:sticky lg:top-6">
+        <PreviewTabs
+          targets={targets.filter((t) => selected.includes(t.id))}
+          caption={caption}
+          media={media}
+          // Absent while the post is locked, which is what makes the preview
+          // read-only without it needing to know why.
+          onCaptionChange={locked ? undefined : setCaption}
+        />
+      </div>
     </form>
   )
 }

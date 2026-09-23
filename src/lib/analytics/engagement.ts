@@ -45,7 +45,7 @@ export async function readEngagement(
   const supabase = await createClient()
 
   // Only posts that actually went out can have been seen by anybody.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('posts')
     .select('id, caption, scheduled_at')
     .eq('workspace_id', workspaceId)
@@ -54,6 +54,12 @@ export async function readEngagement(
     .order('scheduled_at', { ascending: true })
     .limit(400)
     .returns<PostRow[]>()
+
+  // An unreadable table is not an empty one. Collapsing the two made the card
+  // say "Nothing has gone out yet" to a workspace with a year of posts in it.
+  if (error) {
+    return { grain, points: [], totals: { views: 0, interactions: 0 }, sample: true, unavailable: true }
+  }
 
   const posts = data ?? []
 

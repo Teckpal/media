@@ -126,3 +126,174 @@ body {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+
+/*
+ * The notification toast sliding up from the corner.
+ *
+ * A toast that simply appears is easy to miss — it lands in peripheral vision
+ * with nothing to draw the eye. The movement is what makes it register, so it
+ * is short enough not to delay reading the thing.
+ *
+ * Nothing moves for anyone who has asked for less motion; they get the same
+ * toast, already in place. The chime is silenced by the same preference.
+ */
+@keyframes motif-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.motif-toast {
+  animation: motif-toast-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motif-toast {
+    animation: none;
+  }
+}
+
+/*
+ * The calendar making room for an open day.
+ *
+ * The month shrinks rather than being replaced, because the two are the same
+ * object: you opened a day *of this month*, and watching the grid give way is
+ * what says so. A panel that cut in over a grid that jumped to a new width
+ * would read as a different screen arriving.
+ *
+ * `grid-template-columns` is what animates, which is why the closed state is a
+ * zero-width second track rather than a single column. `none` and
+ * `minmax(0,1fr) 22rem` have nothing to interpolate between, so the browser
+ * would snap; two concrete track lists do not. `column-gap` goes with it, or
+ * the closed grid would sit 0.75rem narrower than the space it has for no
+ * visible reason.
+ *
+ * The tiles need no animation of their own. They are `1fr` columns inside the
+ * track that is moving, so they follow it continuously and for free.
+ */
+.motif-calendar {
+  display: grid;
+  gap: 0.75rem;
+}
+
+@media (min-width: 1024px) {
+  .motif-calendar {
+    grid-template-columns: minmax(0, 1fr) 0rem;
+    column-gap: 0rem;
+    align-items: start;
+  }
+
+  .motif-calendar[data-open='true'] {
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    column-gap: 0.75rem;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .motif-calendar {
+      /* Slightly decelerating, so the grid settles rather than stopping dead.
+         280ms is long enough to follow and short enough not to be waited on. */
+      transition:
+        grid-template-columns 280ms cubic-bezier(0.22, 1, 0.36, 1),
+        column-gap 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+  }
+}
+
+/*
+ * The panel's own arrival, once there is room for it.
+ *
+ * Shorter than the column, and delayed by about half of it, so the content
+ * appears into space that already exists instead of racing the grid for it.
+ */
+@keyframes motif-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .motif-panel {
+    animation: motif-panel-in 200ms 120ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+}
+
+/* =============================================================================
+   The product's palette
+   =============================================================================
+
+   Scoped to a class rather than redefining `:root`, because the marketing
+   pages are not part of this. They are built around the deep plum artwork and
+   its rose/violet field; pushing a crimson accent through them would leave the
+   buttons arguing with the photographs behind them. Signed-in screens and the
+   auth screens get this; `/` and `/bd` keep what they have.
+
+   The seven values below came from the design. Everything else is derived, and
+   marked where it is — a palette of seven cannot dress a product with fifteen
+   tokens without somebody filling the gaps, and it is better that the filling
+   is visible.
+
+   `color-scheme: light` is not decoration. Native controls — the time field in
+   the date picker, checkboxes, scrollbars — render from that property, and on
+   a machine set to dark they would come out dark-on-white without it.
+   ========================================================================== */
+.motif-product {
+  color-scheme: light;
+
+  --background: #f4f4f6; /* given */
+  --surface: #ffffff; /* given */
+  --surface-muted: #f0f0f3; /* derived: a step below the page, so it reads
+                               as recessed on a white card and as a tint on
+                               the page */
+  --border: #e0e0e0; /* given */
+  --foreground: #1a1a1a; /* given */
+  --muted-foreground: #757575; /* given */
+
+  --primary: #d81b43; /* given */
+  --primary-foreground: #ffffff; /* derived: 5.1:1 on the accent */
+  --primary-hover: #b8163a; /* derived: the accent, darkened */
+
+  /* The design uses one red for the accent and for error text, so this is that
+     red. The collision it would otherwise cause — a destructive button looking
+     exactly like a primary one — is settled in `buttonStyles`, where `danger`
+     is now outlined rather than filled. */
+  --danger: #d81b43;
+  --danger-foreground: #ffffff;
+  --danger-subtle: #fce8e6; /* given */
+
+  /* Derived. Not in the design, and the product needs them: a published post
+     and a paused one have to be distinguishable from a failed one at a glance.
+     Both are muted enough to sit under a crimson accent without competing. */
+  --success: #1b7f4b;
+  --success-subtle: #e8f4ec;
+
+  --warning: #a86200;
+  --warning-subtle: #fdf2e3;
+
+  --ring: rgb(216 27 67 / 0.4);
+
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/*
+  The page behind the page.
+
+  `body` takes its background from `:root`, which still follows the operating
+  system — so on a dark machine an overscroll, or a screen shorter than the
+  viewport, would show a dark band under a light product. `:has` lets the body
+  follow whichever surface it is actually carrying.
+*/
+body:has(.motif-product) {
+  background: #f4f4f6;
+  color: #1a1a1a;
+}

@@ -1,13 +1,12 @@
 'use client'
 
-import Link from 'next/link'
-import { useActionState, useMemo, useState } from 'react'
+import { useActionState, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
 import { reschedulePostsAction } from '@/lib/posts/actions'
 import { cn } from '@/lib/utils'
-import { ROUTES } from '@/lib/routes'
 import type { FormState } from '@/lib/forms'
-import type { PostStatus } from '@/lib/constants'
+import type { Platform, PostStatus } from '@/lib/constants'
+import { DayPanel } from './day-panel'
 
 /**
  * The month, with the posts moveable between days.
@@ -39,6 +38,8 @@ export type GridPost = {
   clock: string
   /** Formatted for reading, e.g. "9:00 am". */
   time: string
+  /** Deduplicated, for the day panel. Absent on views that do not fetch them. */
+  platforms?: Platform[]
 }
 
 export type GridCell = { day: number; key: string | null }
@@ -63,17 +64,67 @@ export function MonthGrid({
   cells,
   today,
   weekdays,
+  highlight,
+  timeZone,
+  canWrite,
 }: {
   posts: GridPost[]
   cells: GridCell[]
   today: string
   weekdays: string[]
+  /** A post just saved elsewhere, to point at. */
+  highlight?: string | null
+  timeZone: string
+  canWrite: boolean
 }) {
   /** `postId -> new dayKey`, held until saved. */
   const [moves, setMoves] = useState<Record<string, string>>({})
   const [dragging, setDragging] = useState<string | null>(null)
   const [over, setOver] = useState<string | null>(null)
   const [refused, setRefused] = useState<string | null>(null)
+
+  /** The tile that is open, and the post inside it that is open. */
+  const [openDay, setOpenDay] = useState<string | null>(null)
+  const [openPost, setOpenPost] = useState<string | null>(null)
+
+  /**
+   * The day whose contents are still on screen.
+   *
+   * It lags `openDay` on the way out. Unmounting the panel the instant it is
+   * closed would empty the column and then collapse an empty box, which reads
+   * as two events; keeping the contents until the column has finished closing
+   * makes it one.
+   *
+   * A timer rather than `transitionend`, because there is no transition to
+   * listen for below the `lg` breakpoint or for a reader who has asked for
+   * less motion — and a panel that waits for an event that never fires would
+   * simply never close.
+   */
+  const [shownDay, setShownDay] = useState<string | null>(null)
+  const closeTimer = useRef<number | null>(null)
+
+  function openTile(dayKey: string, postId: string | null = null) {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current)
+    setShownDay(dayKey)
+    setOpenDay(dayKey)
+    setOpenPost(postId)
+  }
+
+  function closeTile() {
+    setOpenDay(null)
+    setOpenPost(null)
+    if (closeTimer.current) window.clearTimeout(closeTimer.current)
+    // Matches the column's 280ms. Being a little late costs nothing; being
+    // early puts a gap in the middle of the animation.
+    closeTimer.current = window.setTimeout(() => setShownDay(null), 300)
+  }
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current) window.clearTimeout(closeTimer.current)
+    },
+    [],
+  )
 
   const [state, save, saving] = useActionState<FormState, FormData>(
     reschedulePostsAction,
@@ -230,17 +281,31 @@ export function MonthGrid({
         </p>
       ) : null}
 
-      {/* --- the grid --- */}
-      <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
-        <div className="grid grid-cols-7 border-b border-border">
+      {/* Grid on the left, open day on the right.
+
+          The two are siblings in one grid rather than the panel being stacked
+          underneath, so the month stays in view while a day is being read —
+          which is the whole reason for opening one. A month you cannot see is
+          a month you cannot compare the day against.
+
+          Below `lg` they stack anyway: side by side at phone width would give
+          the calendar about 180 pixels for seven columns. */}
+      <div className="motif-calendar" data-open={openDay ? 'true' : 'false'}>
+        {/* --- the grid ---
+
+            Tiles with a gap rather than cells sharing borders. The gap is what
+            makes a day feel like a thing you can press, and pressing one is now
+            how you get at its posts. */}
+        <div className="min-w-0 space-y-1.5">
+        <div className="grid grid-cols-7 gap-1.5">
           {weekdays.map((day) => (
-            <div key={day} className="px-2 py-2 text-center text-xs font-medium text-muted-foreground">
+            <div key={day} className="py-1 text-center text-xs font-medium text-muted-foreground">
               {day}
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-7">
+        <div className="grid grid-cols-7 gap-1.5">
           {cells.map((cell, index) => {
             const dayPosts = cell.key ? (placed.get(cell.key) ?? []) : []
             const isToday = cell.key === today
@@ -260,11 +325,23 @@ export function MonthGrid({
                   const postId = event.dataTransfer.getData('text/post-id')
                   if (postId && cell.key) place(postId, cell.key)
                 }}
+                onClick={(event) => {
+                  // A click that landed on a post is that post's business —
+                  // the post opens the day *and* itself, and does so through
+                  // its own handler.
+                  if (!cell.key) return
+                  if ((event.target as HTMLElement).closest('[data-post]')) return
+                  if (openDay === cell.key) closeTile()
+                  else openTile(cell.key)
+                }}
                 className={cn(
-                  'min-h-24 border-r border-b border-border p-1.5',
-                  !cell.key && 'bg-surface-muted/40',
-                  index % 7 === 6 && 'border-r-0',
-                  over === cell.key && cell.key && 'bg-primary/10 ring-2 ring-inset ring-primary/40',
+                  'min-h-24 rounded-[var(--radius)] border p-1.5 text-left transition-colors',
+                  cell.key
+                    ? 'cursor-pointer border-border bg-surface hover:border-muted-foreground/40'
+                    : 'border-transparent bg-surface-muted/30',
+                  isToday && 'border-primary/50',
+                  openDay === cell.key && cell.key && 'border-primary ring-2 ring-primary/30',
+                  over === cell.key && cell.key && 'bg-primary/10 ring-2 ring-primary/40',
                 )}
               >
                 {cell.key ? (
@@ -286,6 +363,7 @@ export function MonthGrid({
                         return (
                           <li key={post.id}>
                             <div
+                              data-post
                               draggable={movable}
                               onDragStart={(event) => {
                                 event.dataTransfer.setData('text/post-id', post.id)
@@ -316,6 +394,11 @@ export function MonthGrid({
                                 movable ? 'cursor-grab active:cursor-grabbing hover:bg-surface-muted' : 'opacity-70',
                                 dragging === post.id && 'opacity-40',
                                 moved && 'bg-primary/10 ring-1 ring-primary/40',
+                                // The one just saved in the composer. Held
+                                // until the next render rather than faded out
+                                // on a timer — somebody who looks away and
+                                // back should still find it.
+                                post.id === highlight && !moved && 'bg-primary/15 ring-1 ring-primary',
                               )}
                             >
                               <span
@@ -323,15 +406,18 @@ export function MonthGrid({
                                 aria-hidden
                               />
                               <span className="shrink-0 text-muted-foreground">{post.time}</span>
-                              <Link
-                                href={`${ROUTES.posts}/${post.id}`}
-                                // Dragging a link drags the URL unless this is
-                                // taken over by the row above it.
+                              {/* Opens the day beneath the grid rather than
+                                  navigating. The post is two lines of six-point
+                                  text here; the panel is where it is legible,
+                                  and where it can be changed. */}
+                              <button
+                                type="button"
                                 draggable={false}
-                                className="truncate hover:underline"
+                                onClick={() => openTile(post.dayKey, post.id)}
+                                className="truncate text-left hover:underline"
                               >
                                 {post.caption.trim() || 'Untitled'}
-                              </Link>
+                              </button>
                             </div>
                           </li>
                         )
@@ -342,13 +428,58 @@ export function MonthGrid({
               </div>
             )
           })}
+          </div>
         </div>
+
+        {/* `overflow-hidden` is what lets the column be 0 wide without its
+            contents spilling across the grid; the panel keeps its own width
+            inside, so it is revealed rather than squashed and re-flowed.
+
+            Sticky, so a long month scrolled past does not carry the day out of
+            view with it. */}
+        {shownDay ? (
+          <div className="lg:sticky lg:top-6 lg:overflow-hidden">
+            <DayPanel
+              className="motif-panel lg:w-[22rem]"
+              heading={headingFor(shownDay)}
+              posts={(placed.get(shownDay) ?? []).map((post) => ({
+                ...post,
+                platforms: post.platforms ?? [],
+                scheduledLocal: `${post.dayKey}T${post.clock}`,
+              }))}
+              timeZone={timeZone}
+              today={today}
+              canWrite={canWrite}
+              openPost={openPost}
+              onOpenPost={setOpenPost}
+              onClose={closeTile}
+            />
+          </div>
+        ) : null}
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Drag a post to another day to move it, or onto another post to swap the
-        two. The time of day stays with the post. Nothing is saved until you say so.
+        Press a day to open it. Drag a post to another day to move it, or onto
+        another post to swap the two — the time of day stays with the post, and
+        nothing is saved until you say so.
       </p>
     </div>
   )
+}
+
+/**
+ * "Friday, 25 September 2026".
+ *
+ * Built in UTC on purpose: this names a date, not an instant. Formatting
+ * `2026-09-25` in the reader's local zone would show the 24th to anybody west
+ * of Greenwich.
+ */
+function headingFor(dayKey: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${dayKey}T00:00:00Z`))
 }

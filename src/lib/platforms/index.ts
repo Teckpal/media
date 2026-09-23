@@ -1,19 +1,29 @@
 import 'server-only'
 
 import { facebookAdapter, instagramAdapter } from '@/lib/platforms/meta'
+import { linkedinAdapter } from '@/lib/platforms/linkedin'
+import { tiktokAdapter } from '@/lib/platforms/tiktok'
+import { xAdapter } from '@/lib/platforms/x'
+import { youtubeAdapter } from '@/lib/platforms/youtube'
 import type { PlatformAdapter } from '@/lib/platforms/types'
-import { PHASE_1_PLATFORMS, type Platform } from '@/lib/constants'
+import { PLATFORMS, type Platform } from '@/lib/constants'
 
 /**
- * The platforms that are actually wired.
+ * The platforms that are wired.
  *
- * Section 11 phases the other four in: LinkedIn and YouTube in Phase 2, TikTok
- * and X in Phase 3. Until an adapter exists here, the connect screen offers the
- * platform nowhere and the routes refuse it — rather than half-working.
+ * All six have an adapter now. An adapter existing is not the same as a
+ * platform working: each refuses to build an auth URL while its credentials
+ * are unset, so an unconfigured platform is offered as "needs setup" rather
+ * than as a button that fails after the user has clicked through a consent
+ * screen. `configuredPlatforms()` is what the connect screen should ask.
  */
 const ADAPTERS: Partial<Record<Platform, PlatformAdapter>> = {
   facebook: facebookAdapter,
   instagram: instagramAdapter,
+  twitter: xAdapter,
+  linkedin: linkedinAdapter,
+  tiktok: tiktokAdapter,
+  youtube: youtubeAdapter,
 }
 
 export function adapterFor(platform: Platform): PlatformAdapter | null {
@@ -24,7 +34,36 @@ export function isSupported(value: string): value is Platform {
   return value in ADAPTERS
 }
 
-/** What the connect screen should offer today. */
+/** Every platform with an adapter, configured or not. */
 export function availablePlatforms(): Platform[] {
-  return PHASE_1_PLATFORMS.filter((p) => p in ADAPTERS)
+  return PLATFORMS.filter((p) => p in ADAPTERS)
+}
+
+/**
+ * Can this platform actually be connected right now?
+ *
+ * Each adapter throws `ConnectError('provider_error')` from `buildAuthUrl`
+ * when its credentials are missing, so asking it to build one is the honest
+ * test — there is no second list of required variables to drift out of step
+ * with the adapters themselves.
+ */
+export function isConfigured(platform: Platform): boolean {
+  const adapter = ADAPTERS[platform]
+  if (!adapter) return false
+
+  try {
+    adapter.buildAuthUrl({
+      redirectUri: 'https://example.invalid/probe',
+      state: 'probe',
+      codeChallenge: adapter.usesPkce ? 'probe' : undefined,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The ones a visitor can connect today. */
+export function configuredPlatforms(): Platform[] {
+  return availablePlatforms().filter(isConfigured)
 }

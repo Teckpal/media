@@ -29,6 +29,12 @@ type OAuthState = {
   userId: string
   /** Where to send the user afterwards — onboarding, or the connections page. */
   returnTo: string
+  /**
+   * The PKCE verifier, for platforms that need one. It lives here rather than
+   * anywhere the browser can read: the cookie is encrypted and httpOnly, which
+   * is exactly the property PKCE depends on.
+   */
+  codeVerifier?: string
   issuedAt: number
 }
 
@@ -40,6 +46,7 @@ export async function beginOAuth(params: {
   workspaceId: string
   userId: string
   returnTo: string
+  codeVerifier?: string
 }): Promise<string> {
   const nonce = randomBytes(24).toString('base64url')
 
@@ -49,6 +56,7 @@ export async function beginOAuth(params: {
     workspaceId: params.workspaceId,
     userId: params.userId,
     returnTo: params.returnTo,
+    codeVerifier: params.codeVerifier,
     issuedAt: Date.now(),
   }
 

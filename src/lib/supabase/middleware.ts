@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { publicEnv } from '@/lib/env'
+import { sessionScoped } from '@/lib/supabase/cookie-options'
 import type { Database } from '@/types/database'
 
 /**
@@ -25,7 +26,7 @@ export async function updateSession(request: NextRequest) {
           }
           response = NextResponse.next({ request })
           for (const { name, value, options } of cookiesToSet) {
-            response.cookies.set(name, value, options)
+            response.cookies.set(name, value, sessionScoped(options))
           }
         },
       },
