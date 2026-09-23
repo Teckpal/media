@@ -46,9 +46,11 @@ export function EngagementChart({
         <div>
           <h2 className="font-medium">Views and interactions</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {series.points.length === 0
-              ? 'Nothing has gone out yet.'
-              : `${series.totals.views.toLocaleString()} views · ${series.totals.interactions.toLocaleString()} interactions`}
+            {series.unavailable
+              ? 'We could not load this just now.'
+              : series.points.length === 0
+                ? 'Nothing has gone out yet.'
+                : `${series.totals.views.toLocaleString()} views · ${series.totals.interactions.toLocaleString()} interactions`}
           </p>
         </div>
 
@@ -83,7 +85,9 @@ export function EngagementChart({
       <div className="p-5">
         {series.points.length === 0 ? (
           <p className="py-12 text-center text-sm text-muted-foreground">
-            Once posts have gone out, their views and interactions appear here.
+            {series.unavailable
+              ? 'This did not load. Refreshing usually fixes it.'
+              : 'Once posts have gone out, their views and interactions appear here.'}
           </p>
         ) : (
           <ChartContainer config={CONFIG} className="h-[18rem] w-full">

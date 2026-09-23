@@ -11,9 +11,10 @@ import { requireWorkspace } from '@/lib/auth/gate'
 import { createClient } from '@/lib/supabase/server'
 import { loadComposerMedia, loadTargetOptions } from '@/lib/posts/queries'
 import { canPublish, explainBlock } from '@/lib/billing/entitlements'
-import { formatDateTimeInZone, isPast, utcToLocalInput } from '@/lib/time'
+import { formatDateTimeInZone, isPast, todayInZone, utcToLocalInput } from '@/lib/time'
 import { LOCKED_STATUSES, PLATFORM_LABELS, atLeast, type Platform } from '@/lib/constants'
 import { ROUTES } from '@/lib/routes'
+import type { HashtagProfile } from '@/lib/posts/hashtags'
 
 export const metadata: Metadata = { title: 'Post' }
 
@@ -52,6 +53,7 @@ export default async function PostPage({
 
   const accountIds = targets.map((t) => t.social_account_id)
   const entitlement = await canPublish(active.workspace, accountIds)
+  const profile = await loadHashtagProfile(supabase, active.workspace.id)
 
   const canWrite = atLeast(active.role, 'editor')
   const locked = LOCKED_STATUSES.includes(post.status)
@@ -64,7 +66,7 @@ export default async function PostPage({
     (post.status === 'paused' && (!post.scheduled_at || isPast(post.scheduled_at)))
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <Link
         href={ROUTES.posts}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -197,6 +199,8 @@ export default async function PostPage({
           canSchedule={entitlement.allowed}
           scheduleBlockReason={entitlement.allowed ? null : explainBlock(entitlement.block)}
           mustReschedule={mustReschedule}
+          today={todayInZone(active.workspace.timezone)}
+          profile={profile}
         />
       )}
 
@@ -211,4 +215,42 @@ export default async function PostPage({
       ) : null}
     </div>
   )
+}
+
+/**
+ * The brand profile, for hashtag suggestions.
+ *
+ * `error` is bound and logged: a failed read and an unfilled profile both
+ * produce no suggestions, and only one of them is a fact. Either way the
+ * composer still works — suggestions are a convenience, and losing them must
+ * never stop somebody writing a post.
+ */
+async function loadHashtagProfile(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  workspaceId: string,
+): Promise<HashtagProfile | null> {
+  const { data, error } = await supabase
+    .from('profiles_setup')
+    .select('brand_name, industry, target_audience, keywords')
+    .eq('workspace_id', workspaceId)
+    .maybeSingle<{
+      brand_name: string | null
+      industry: string | null
+      target_audience: string | null
+      keywords: string[] | null
+    }>()
+
+  if (error) {
+    console.error('[posts] brand profile unreadable: %s', error.message)
+    return null
+  }
+
+  if (!data) return null
+
+  return {
+    brandName: data.brand_name,
+    industry: data.industry,
+    targetAudience: data.target_audience,
+    keywords: data.keywords,
+  }
 }

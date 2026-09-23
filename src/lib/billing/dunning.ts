@@ -99,6 +99,27 @@ function rowsOrDegrade<T>(
   return result.data ?? []
 }
 
+/**
+ * Records a write that did not happen.
+ *
+ * `rowsOrDegrade` above covers the reads that decide whether a step runs at
+ * all. This covers the writes inside them — a sweep that reads its list
+ * perfectly and then fails on every insert still reported `ok` with a tidy
+ * zero, which is the same lie in a smaller place.
+ */
+function wroteOrDegrade(
+  summary: BillingSweepSummary,
+  step: string,
+  result: { error: { message: string } | null },
+): boolean {
+  if (result.error) {
+    console.error('[billing] %s write failed: %s', step, result.error.message)
+    if (!summary.degraded.includes(step)) summary.degraded.push(step)
+    return false
+  }
+  return true
+}
+
 async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<void> {
   const admin = createAdminClient()
   const horizon = new Date(now.getTime() + RENEWAL_LEAD_DAYS * DAY_MS)
@@ -153,7 +174,7 @@ async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<v
       periodEnd: addMonthUtc(periodStart),
     })
 
-    const { data: invoice } = await admin
+    const { data: invoice, error: invoiceError } = await admin
       .from('invoices')
       .insert({
         workspace_id: subscription.workspace_id,
@@ -175,9 +196,10 @@ async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<v
       .select('id')
       .single()
 
+    if (!wroteOrDegrade(summary, 'raiseRenewals', { error: invoiceError })) continue
     if (!invoice) continue
 
-    await admin.from('invoice_lines').insert(
+    const lines = await admin.from('invoice_lines').insert(
       quote.lines
         .filter((line) => line.kind !== 'credit')
         .map((line) => ({
@@ -189,6 +211,10 @@ async function raiseRenewals(summary: BillingSweepSummary, now: Date): Promise<v
           amount_minor: line.amountMinor,
         })),
     )
+
+    // An invoice with no lines is worse than no invoice: it is a bill nobody
+    // can explain. Counted only when both halves landed.
+    if (!wroteOrDegrade(summary, 'raiseRenewals', lines)) continue
 
     summary.invoicesRaised += 1
   }
@@ -225,7 +251,7 @@ async function sendReminders(summary: BillingSweepSummary, now: Date): Promise<v
 
     if ((already ?? 0) > 0) continue
 
-    await admin.from('notifications').insert({
+    const reminder = await admin.from('notifications').insert({
       workspace_id: invoice.workspace_id,
       user_id: null,
       kind: 'payment_due',
@@ -237,6 +263,8 @@ async function sendReminders(summary: BillingSweepSummary, now: Date): Promise<v
       link_path: ROUTES.billing,
       data: { invoice_id: invoice.id, milestone: String(milestone) },
     })
+
+    if (!wroteOrDegrade(summary, 'sendReminders', reminder)) continue
 
     summary.remindersSent += 1
   }
@@ -280,11 +308,15 @@ async function moveOverdueToPastDue(
 
     const until = graceUntil(new Date(subscription.current_period_end))
 
-    await admin
+    const moved = await admin
       .from('subscriptions')
       .update({ status: 'past_due', grace_until: until.toISOString() })
       .eq('id', subscription.id)
       .eq('status', 'active')
+
+    // Telling somebody their payment is overdue when the status did not
+    // actually move is worse than saying nothing.
+    if (!wroteOrDegrade(summary, 'moveOverdueToPastDue', moved)) continue
 
     await notifyBilling({
       workspaceId: subscription.workspace_id,
@@ -311,20 +343,30 @@ async function endGracePeriods(summary: BillingSweepSummary, now: Date): Promise
     .limit(200))
 
   for (const subscription of lapsed) {
-    await admin
+    const ended = await admin
       .from('subscriptions')
       .update({ status: 'expired' })
       .eq('id', subscription.id)
       .in('status', ['past_due', 'grace'])
 
+    // Withdrawing publishing is the most consequential thing this sweep does.
+    // If the subscription did not actually move, nothing below it should
+    // happen either.
+    if (!wroteOrDegrade(summary, 'endGracePeriods', ended)) continue
+
     // Section 7.2: scheduled posts pause. Not cancelled, not deleted — paused,
     // so paying resumes exactly what was planned.
-    const { data: paused } = await admin
+    const { data: paused, error: pauseError } = await admin
       .from('posts')
       .update({ status: 'paused' })
       .eq('workspace_id', subscription.workspace_id)
       .eq('status', 'scheduled')
       .select('id')
+
+    // A subscription expired with its posts left scheduled is the worst state
+    // this sweep can leave behind: publishing is withdrawn, but the calendar
+    // still says the posts are going out.
+    if (!wroteOrDegrade(summary, 'endGracePeriods', { error: pauseError ?? null })) continue
 
     summary.postsPaused += paused?.length ?? 0
     summary.expired += 1

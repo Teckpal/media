@@ -73,6 +73,49 @@ const LIMITS: Partial<Record<Platform, Limits>> = {
     videoTypes: ['video/mp4', 'video/quicktime'],
     maxVideoMs: 15 * 60 * 1000,
   },
+
+  // 280 on a free or basic plan. Premium raises it, but the composer should
+  // warn against the limit almost everybody has rather than the best case.
+  twitter: {
+    captionMax: 280,
+    mediaRequired: false,
+    maxMedia: 4,
+    imageTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+    videoTypes: ['video/mp4'],
+    maxVideoMs: 140 * 1000,
+  },
+
+  linkedin: {
+    captionMax: 3_000,
+    mediaRequired: false,
+    maxMedia: 20,
+    imageTypes: ['image/jpeg', 'image/png', 'image/gif'],
+    videoTypes: ['video/mp4'],
+    maxVideoMs: 30 * 60 * 1000,
+  },
+
+  // No text post exists on either of these. A caption with nothing attached
+  // cannot be published at all, so the composer refuses it here rather than
+  // letting somebody schedule a post that can only fail at 9am.
+  tiktok: {
+    captionMax: 2_200,
+    mediaRequired: true,
+    maxMedia: 1,
+    imageTypes: [],
+    videoTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
+    maxVideoMs: 10 * 60 * 1000,
+  },
+
+  youtube: {
+    // The video's own title, not a description: the API caps it at 100 and
+    // rejects angle brackets outright.
+    captionMax: 100,
+    mediaRequired: true,
+    maxMedia: 1,
+    imageTypes: [],
+    videoTypes: ['video/mp4', 'video/quicktime', 'video/webm'],
+    maxVideoMs: 12 * 60 * 60 * 1000,
+  },
 }
 
 export function countHashtags(caption: string): number {

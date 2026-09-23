@@ -7,7 +7,15 @@
  * "looks fine" report. This signs in through the actual login form, so what it
  * captures is what a signed-in person sees.
  *
- *   node scripts/shot.mjs <path> <out.png> [--w 1280] [--h 900] [--no-login] [--click <selector>]
+ *   node scripts/shot.mjs <path> <out.png> [--w 1280] [--h 900] [--no-login]
+ *                            [--click <selector>] [--eval <js>] [--as <email> <password>]
+ *                            [--console] [--ws] [--reduced-motion]
+ *
+ * `--console` prints everything the page logged; `--ws` prints every websocket
+ * frame. The second found the notification bug this was written for: the
+ * realtime channel reported itself subscribed while its join frame carried no
+ * access token, which is invisible from inside the page and obvious in the
+ * frames.
  *
  * Credentials come from DEMO_EMAIL / DEMO_PASSWORD in .env.local.
  */
@@ -40,8 +48,10 @@ const evalScript = flag('eval', null)
 
 const env = readEnv()
 const base = env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-const email = env.DEMO_EMAIL
-const password = env.DEMO_PASSWORD
+// `--as email password` signs in as somebody other than the demo owner, which
+// is how a second member's view of a screen gets verified at all.
+const email = flag('as', env.DEMO_EMAIL)
+const password = args.indexOf('--as') > -1 ? args[args.indexOf('--as') + 2] : env.DEMO_PASSWORD
 
 const CHROME = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -128,6 +138,20 @@ const send = (method, params) => cdp.send(method, params, sessionId)
 
 await send('Page.enable')
 await send('Runtime.enable')
+
+// Websocket frames, when asked for. A realtime subscription that reports
+// itself connected and then delivers nothing is invisible from inside the
+// page; the frames are where the server's side of that conversation is.
+if (args.includes('--ws')) await send('Network.enable')
+
+// Emulating the preference rather than trusting a comment about it. Work that
+// claims to respect `prefers-reduced-motion` should be checkable, and Chrome
+// will only report it if it is told to.
+if (args.includes('--reduced-motion')) {
+  await send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+  })
+}
 
 async function goto(url) {
   await send('Page.navigate', { url })
@@ -223,8 +247,27 @@ fs.mkdirSync(path.dirname(out), { recursive: true })
 fs.writeFileSync(out, Buffer.from(data, 'base64'))
 console.log(`  wrote ${out}`)
 
-const errors = await evaluate('JSON.stringify(window.__shotErrors || [])')
-if (errors && errors !== '[]') console.log('  page errors:', errors)
+// Everything the page said while we were driving it. A screenshot shows what
+// rendered; the console is where the things that did NOT render explain
+// themselves — a failed subscription, a discarded fetch, a React warning.
+if (args.includes('--ws')) {
+  for (const event of cdp.events) {
+    if (!event.method.startsWith('Network.webSocket')) continue
+    const p = event.params
+    const payload = p.response?.payloadData ?? p.request?.payloadData ?? p.url ?? ''
+    console.log(`  [ws] ${event.method.replace('Network.webSocket', '')} ${String(payload).slice(0, 400)}`)
+  }
+}
+
+if (args.includes('--console')) {
+  for (const event of cdp.events) {
+    if (event.method !== 'Runtime.consoleAPICalled') continue
+    const text = event.params.args
+      .map((a) => (a.value !== undefined ? String(a.value) : (a.description ?? a.type)))
+      .join(' ')
+    console.log(`  [${event.params.type}] ${text}`)
+  }
+}
 
 cdp.ws.close()
 chrome.kill()

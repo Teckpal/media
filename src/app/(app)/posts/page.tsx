@@ -2,13 +2,14 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { StatusBadge } from '@/components/posts/status-badge'
+import { PostBoard, type BoardPost } from '@/components/posts/post-board'
 import { Alert } from '@/components/ui/alert'
 import { Card } from '@/components/ui/card'
 import { buttonStyles } from '@/components/ui/button'
 import { requireWorkspace } from '@/lib/auth/gate'
 import { createClient } from '@/lib/supabase/server'
 import { formatDateTimeInZone } from '@/lib/time'
-import { POST_STATUSES, atLeast, type PostStatus } from '@/lib/constants'
+import { POST_STATUSES, atLeast, type Platform, type PostStatus } from '@/lib/constants'
 import { ROUTES } from '@/lib/routes'
 import { cn } from '@/lib/utils'
 
@@ -39,17 +40,53 @@ export default async function PostsPage({ searchParams }: PageProps<'/posts'>) {
   const filter = FILTERS.find((f) => f.key === filterKey) ?? FILTERS[0]
   const forbidden = params.error === 'forbidden'
 
+  /**
+   * The board ignores the filter, deliberately.
+   *
+   * Its whole value is the shape of all six columns side by side — a board
+   * showing only drafts is a list with extra chrome. So the filter chips are
+   * hidden in board view rather than quietly narrowing it.
+   */
+  const view: 'list' | 'board' = params.view === 'board' ? 'board' : 'list'
+
   const supabase = await createClient()
-  const { data: posts } = await supabase
+  const { data: posts, error: postsError } = await supabase
     .from('posts')
-    .select('id, status, caption, scheduled_at, published_at, updated_at')
+    .select('id, status, caption, scheduled_at, published_at, updated_at, post_targets(platform)')
     .eq('workspace_id', active.workspace.id)
-    .in('status', filter.statuses)
+    .in('status', view === 'board' ? POST_STATUSES.filter((s) => s !== 'removed') : filter.statuses)
     .order('scheduled_at', { ascending: false, nullsFirst: false })
     .order('updated_at', { ascending: false })
-    .limit(100)
+    .limit(view === 'board' ? 200 : 100)
+    .returns<
+      {
+        id: string
+        status: PostStatus
+        caption: string
+        scheduled_at: string | null
+        published_at: string | null
+        updated_at: string
+        post_targets: { platform: Platform }[] | null
+      }[]
+    >()
+
+  // Bound and surfaced: an unreadable list and an empty one look the same
+  // otherwise, and only one of them is a fact.
+  if (postsError) throw new Error(`Could not read the posts: ${postsError.message}`)
 
   const rows = posts ?? []
+
+  const boardPosts: BoardPost[] = rows.map((post) => ({
+    id: post.id,
+    caption: post.caption,
+    status: post.status,
+    when: post.published_at
+      ? formatDateTimeInZone(post.published_at, active.workspace.timezone)
+      : post.scheduled_at
+        ? formatDateTimeInZone(post.scheduled_at, active.workspace.timezone)
+        : null,
+    platforms: [...new Set((post.post_targets ?? []).map((t) => t.platform))],
+  }))
   const canWrite = atLeast(active.role, 'editor')
 
   return (
@@ -76,7 +113,15 @@ export default async function PostsPage({ searchParams }: PageProps<'/posts'>) {
         </Alert>
       ) : null}
 
-      <nav className="flex flex-wrap gap-1" aria-label="Filter posts">
+      <div
+        className={cn(
+          'flex flex-wrap items-center gap-3',
+          // Nothing to balance against in board view, so the toggle sits where
+          // it would anyway rather than across a gap.
+          view === 'board' ? 'justify-end' : 'justify-between',
+        )}
+      >
+        <nav className={cn('flex flex-wrap gap-1', view === 'board' && 'hidden')} aria-label="Filter posts">
         {FILTERS.map((option) => (
           <Link
             key={option.key}
@@ -91,10 +136,36 @@ export default async function PostsPage({ searchParams }: PageProps<'/posts'>) {
           >
             {option.label}
           </Link>
-        ))}
-      </nav>
+          ))}
+        </nav>
 
-      {rows.length === 0 ? (
+        <div className="inline-flex rounded-[var(--radius)] border border-border p-0.5">
+          {(
+            [
+              { key: 'list', label: 'List', href: ROUTES.posts },
+              { key: 'board', label: 'Board', href: `${ROUTES.posts}?view=board` },
+            ] as const
+          ).map((option) => (
+            <Link
+              key={option.key}
+              href={option.href}
+              aria-current={view === option.key ? 'page' : undefined}
+              className={cn(
+                'rounded-[calc(var(--radius)-2px)] px-3 py-1.5 text-sm transition-colors',
+                view === option.key
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-surface-muted hover:text-foreground',
+              )}
+            >
+              {option.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {view === 'board' ? (
+        <PostBoard posts={boardPosts} canWrite={canWrite} />
+      ) : rows.length === 0 ? (
         <Card>
           <p className="text-sm text-muted-foreground">
             {filter.key === 'all'

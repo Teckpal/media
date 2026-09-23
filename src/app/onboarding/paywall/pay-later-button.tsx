@@ -11,15 +11,24 @@ import { payLaterAction } from '@/lib/onboarding/actions'
  * active subscription (Section 4, gate 2), which is exactly why finishing
  * onboarding without paying is safe.
  */
-export function PayLaterButton() {
+export function PayLaterButton({ label }: { label?: string }) {
   const [, action, pending] = useActionState(async () => {
     await payLaterAction()
   }, null)
 
   return (
     <form action={action}>
-      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
-        {pending ? 'One moment…' : 'I will decide later'}
+      {/* Under OPEN_ACCESS this is no longer an aside, so it stops looking
+          like one. Same action, same server checks — only the wording and the
+          weight change, because "I will decide later" is the wrong sentence
+          when there is nothing to decide. */}
+      <Button
+        type="submit"
+        variant={label ? 'primary' : 'ghost'}
+        size={label ? 'lg' : 'sm'}
+        disabled={pending}
+      >
+        {pending ? 'One moment…' : (label ?? 'I will decide later')}
       </Button>
     </form>
   )

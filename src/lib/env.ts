@@ -86,6 +86,23 @@ const serverSchema = z.object({
   // current version in the Meta app dashboard before going live.
   META_GRAPH_VERSION: z.string().default('v23.0'),
 
+  // --- the four platforms after Meta (Section 11, Phases 2 and 3) ----------
+  // Each adapter refuses to build an auth URL while its pair is unset, so an
+  // unconfigured platform is offered nowhere rather than half-working.
+  X_CLIENT_ID: z.string().optional(),
+  X_CLIENT_SECRET: z.string().optional(),
+
+  LINKEDIN_CLIENT_ID: z.string().optional(),
+  LINKEDIN_CLIENT_SECRET: z.string().optional(),
+  // LinkedIn pins its REST API by date rather than by path.
+  LINKEDIN_API_VERSION: z.string().default('202501'),
+
+  TIKTOK_CLIENT_KEY: z.string().optional(),
+  TIKTOK_CLIENT_SECRET: z.string().optional(),
+
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+
   SSLCOMMERZ_STORE_ID: z.string().optional(),
   SSLCOMMERZ_STORE_PASSWORD: z.string().optional(),
   SSLCOMMERZ_MODE: z.enum(['sandbox', 'live']).default('sandbox'),

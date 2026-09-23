@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { ROUTES } from '@/lib/routes'
 import { getSessionUser } from '@/lib/auth/session'
 import { signOutAction } from '@/lib/auth/actions'
+import { openAccess } from '@/lib/billing/open-access'
 
 export const metadata: Metadata = { title: 'Verify your email' }
 
@@ -22,7 +23,10 @@ export default async function VerifyEmailPage({
 
   // Section 5, rule 2 is a gate, not a room to sit in. Once the address is
   // verified this page has nothing to say, so hand back to the router.
-  if (user.emailVerified) redirect(ROUTES.dashboard)
+  // Nothing to wait for if the gate is not asking. Landing here under
+  // OPEN_ACCESS would be a dead end: no mail is sent, so the page would ask
+  // the user to check an inbox that will stay empty.
+  if (user.emailVerified || openAccess()) redirect(ROUTES.dashboard)
 
   const error = (await searchParams).error
   const message = typeof error === 'string' ? ERRORS[error] : undefined

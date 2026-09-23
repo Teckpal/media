@@ -3,7 +3,6 @@ import { cookies, headers } from 'next/headers'
 import { RegionSwitch } from '@/components/marketing/region-switch'
 import { SiteFooter } from '@/components/marketing/site-footer'
 import { Wordmark } from '@/components/brand/wordmark'
-import { isSignedIn } from '@/lib/marketing/visitor'
 import { REGION_COOKIE, readRegionHint } from '@/lib/region'
 import { ROUTES } from '@/lib/routes'
 
@@ -21,11 +20,10 @@ import { ROUTES } from '@/lib/routes'
  * site down with it.
  */
 export default async function MarketingLayout({ children }: LayoutProps<'/'>) {
-  const [signedIn, cookieStore, headerList] = await Promise.all([
-    isSignedIn(),
-    cookies(),
-    headers(),
-  ])
+  // The session is no longer read here. The header shows the same two doors
+  // either way, so reading it bought nothing and cost every marketing page a
+  // per-request database call.
+  const [cookieStore, headerList] = await Promise.all([cookies(), headers()])
 
   const region = readRegionHint(
     cookieStore.get(REGION_COOKIE)?.value,
@@ -47,29 +45,28 @@ export default async function MarketingLayout({ children }: LayoutProps<'/'>) {
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
             <RegionSwitch current={region} />
 
-            {signedIn ? (
-              <Link
-                href={ROUTES.dashboard}
-                className="inline-flex h-9 items-center rounded-full bg-white px-5 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
-              >
-                Dashboard
-              </Link>
-            ) : (
-              <>
-                <Link
-                  href={ROUTES.login}
-                  className="text-sm text-white/70 transition-colors hover:text-white"
-                >
-                  Log in
-                </Link>
-                <Link
-                  href={ROUTES.signup}
-                  className="inline-flex h-9 items-center rounded-full bg-white px-5 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
-                >
-                  Get started
-                </Link>
-              </>
-            )}
+            {/*
+              The same two doors whether or not a session exists.
+              
+              This used to collapse into a single "Dashboard" button for a
+              signed-in visitor, which meant the login page was unreachable
+              from the front door — and a stale cookie left somebody with no
+              way to sign in as anybody else. `/login` handles the signed-in
+              case itself now, by offering to continue rather than by
+              redirecting silently.
+            */}
+            <Link
+              href={ROUTES.login}
+              className="text-sm text-white/70 transition-colors hover:text-white"
+            >
+              Log in
+            </Link>
+            <Link
+              href={ROUTES.signup}
+              className="inline-flex h-9 items-center rounded-full bg-white px-5 text-sm font-medium text-[var(--night)] transition-colors hover:bg-white/90"
+            >
+              Get started
+            </Link>
           </div>
         </div>
       </header>

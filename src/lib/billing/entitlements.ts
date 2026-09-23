@@ -2,12 +2,15 @@ import 'server-only'
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
-import type {
-  Database,
-  SocialAccountRow,
-  SubscriptionRow,
-  WorkspaceRow,
-} from '@/types/database'
+import type { Database, WorkspaceRow } from '@/types/database'
+import {
+  decideEntitlement,
+  type CoverageRow,
+  type Entitlement,
+  type PublishBlock,
+  type SeatRow,
+} from '@/lib/billing/entitlement-rules'
+import { noteOpenAccess, openAccess } from '@/lib/billing/open-access'
 
 /**
  * Gate 2 of the two in Section 4.
@@ -24,13 +27,7 @@ import type {
  * as a courtesy; this is what actually refuses.
  */
 
-export type PublishBlock =
-  | { reason: 'no_subscription' }
-  | { reason: 'subscription_lapsed'; until: string | null }
-  | { reason: 'accounts_unpaid'; accountIds: string[]; names: string[] }
-  | { reason: 'accounts_inactive'; accountIds: string[]; names: string[] }
-
-export type Entitlement = { allowed: true } | { allowed: false; block: PublishBlock }
+export type { Entitlement, PublishBlock } from '@/lib/billing/entitlement-rules'
 
 /**
  * Which client asks the question.
@@ -47,27 +44,12 @@ export type EntitlementOptions = {
   client?: EntitlementClient
 }
 
-/** Statuses that still permit publishing. */
-function subscriptionCovers(
-  subscription: Pick<SubscriptionRow, 'status' | 'grace_until' | 'current_period_end'>,
-  now: Date,
-): boolean {
-  if (subscription.status === 'active') {
-    return new Date(subscription.current_period_end) > now
-  }
-
-  // Section 7.2: three days of grace past the due date before scheduled posts
-  // pause and publishing locks. Data, drafts and connections are kept either
-  // way — only the ability to send is withdrawn.
-  if (subscription.status === 'past_due' || subscription.status === 'grace') {
-    return Boolean(subscription.grace_until && new Date(subscription.grace_until) > now)
-  }
-
-  return false
-}
-
 /**
  * May this workspace publish to these accounts?
+ *
+ * This half only fetches. Every rule lives in `decideEntitlement`, where it can
+ * be tested — this file imports `server-only`, which is why the rules had no
+ * tests and how two fail-open defects survived in them.
  *
  * `accountIds` is the set a post is actually going to. An empty set asks the
  * weaker question — may this workspace schedule anything at all — which is what
@@ -80,83 +62,64 @@ export async function canPublish(
 ): Promise<Entitlement> {
   const now = options.now ?? new Date()
 
-  // Section 13 Q4: Self (MOTiF) is internal and exempt. The flag is on the
-  // workspace rather than inferred from its type, so a one-off exemption for
-  // a partner or a beta account needs no code change.
-  if (workspace.is_billing_exempt) return { allowed: true }
+  // The free-for-now switch enters here and nowhere else, through the same
+  // door Section 13 Q4 already opened for MOTiF's own workspace. One path, one
+  // set of tests, and removing the flag restores the gate exactly.
+  noteOpenAccess()
+
+  if (workspace.is_billing_exempt || openAccess()) {
+    return decideEntitlement({
+      isBillingExempt: true,
+      coverage: null,
+      requestedIds: accountIds,
+      accounts: [],
+      readable: true,
+      now,
+    })
+  }
 
   const supabase = options.client ?? (await createClient())
 
-  // Asked through `publishing_coverage` (migration 0013) rather than by
-  // reading `subscriptions` directly.
-  //
-  // Section 6.3 makes billing the owner's alone, and migration 0008 enforces
-  // that with an owner-only policy on the table — which meant an editor
-  // opening the composer saw no subscription and was told to buy a plan their
-  // workspace already had. The function answers the narrow question any member
-  // is entitled to ask, and exposes no amounts.
+  // Asked through `publishing_coverage` (migration 0013) rather than by reading
+  // `subscriptions` directly. Section 6.3 makes billing the owner's alone and
+  // migration 0008 enforces that with an owner-only policy — which meant an
+  // editor opening the composer saw no subscription and was told to buy a plan
+  // their workspace already had. The function answers the narrow question any
+  // member may ask, and exposes no amounts.
   const { data: coverage } = await supabase.rpc('publishing_coverage', {
     ws: workspace.id,
   })
 
-  const subscription = coverage?.[0]
+  const subscription = (coverage?.[0] as CoverageRow | undefined) ?? null
 
-  if (!subscription) {
-    return { allowed: false, block: { reason: 'no_subscription' } }
+  // Nothing to look up when no target has been chosen, or when there is no
+  // subscription to cover one.
+  if (!subscription || accountIds.length === 0) {
+    return decideEntitlement({
+      isBillingExempt: false,
+      coverage: subscription,
+      requestedIds: accountIds,
+      accounts: [],
+      readable: true,
+      now,
+    })
   }
 
-  if (!subscriptionCovers(subscription, now)) {
-    return {
-      allowed: false,
-      block: { reason: 'subscription_lapsed', until: subscription.grace_until },
-    }
-  }
-
-  if (accountIds.length === 0) return { allowed: true }
-
-  const { data: accounts } = await supabase
+  const { data: accounts, error } = await supabase
     .from('social_accounts')
     .select('id, display_name, external_username, status, paid_seat')
     .eq('workspace_id', workspace.id)
     .in('id', [...accountIds])
 
-  const found = accounts ?? []
-
-  // Section 6.1: a connection that needs reconnecting cannot publish, so a
-  // post aimed at one must not be scheduled as though it could.
-  const inactive = found.filter((a) => a.status !== 'active')
-  if (inactive.length > 0) {
-    return {
-      allowed: false,
-      block: {
-        reason: 'accounts_inactive',
-        accountIds: inactive.map((a) => a.id),
-        names: inactive.map(nameOf),
-      },
-    }
-  }
-
-  // Section 7.2: "Connect an account beyond paid count — until paid, the
-  // account can hold drafts only."
-  const unpaid = found.filter((a) => !a.paid_seat)
-  if (unpaid.length > 0) {
-    return {
-      allowed: false,
-      block: {
-        reason: 'accounts_unpaid',
-        accountIds: unpaid.map((a) => a.id),
-        names: unpaid.map(nameOf),
-      },
-    }
-  }
-
-  return { allowed: true }
-}
-
-function nameOf(
-  account: Pick<SocialAccountRow, 'display_name' | 'external_username'>,
-): string {
-  return account.display_name ?? account.external_username ?? 'an account'
+  return decideEntitlement({
+    isBillingExempt: false,
+    coverage: subscription,
+    requestedIds: accountIds,
+    accounts: (accounts ?? []) as SeatRow[],
+    // The distinction the old code lost: a failed read is not an empty result.
+    readable: !error,
+    now,
+  })
 }
 
 /** One sentence a person can act on. */

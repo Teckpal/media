@@ -11,6 +11,7 @@ import { PUBLIC_MODULES, type Module } from '@/lib/constants'
 import { furthest } from '@/lib/onboarding/steps'
 import type { OnboardingStep } from '@/lib/constants'
 import { fieldErrorsFrom, type FormState } from '@/lib/forms'
+import { openAccess } from '@/lib/billing/open-access'
 
 /**
  * Section 5. Every step advance goes through `advance`, which only ever moves
@@ -45,7 +46,28 @@ async function advance(userId: string, to: OnboardingStep): Promise<OnboardingSt
 
 // --- Choose module (Section 3) ----------------------------------------------
 
-const moduleSchema = z.enum(['personal', 'business'] as const satisfies readonly Module[])
+/**
+ * Where a solo workspace starts when the browser will not say.
+ *
+ * Bangladesh is the home market (Section 7A), and a wrong zone is visible and
+ * fixable in Settings — whereas refusing to continue over a header the browser
+ * simply did not send is not.
+ */
+const DEFAULT_TIMEZONE = 'Asia/Dhaka'
+
+const moduleSchema = z.object({
+  module: z.enum(['personal', 'business'] as const satisfies readonly Module[]),
+  /**
+   * The browser's own IANA zone, sent by the choice screen.
+   *
+   * Solo skips the setup form, and the timezone is the one field on it that
+   * cannot be guessed wrong harmlessly — it decides what "9am" means for every
+   * post the account ever schedules. The browser knows it; asking would be
+   * asking a question the machine can answer. Validated below against the
+   * runtime's own database, and ignored if it is nonsense.
+   */
+  timezone: z.string().trim().max(64).optional(),
+})
 
 export async function chooseModuleAction(
   _prev: FormState,
@@ -53,23 +75,126 @@ export async function chooseModuleAction(
 ): Promise<FormState> {
   const user = await getSessionUser()
   if (!user) redirect(ROUTES.login)
-  if (!user.emailVerified) redirect(ROUTES.verifyEmail)
+  if (!user.emailVerified && !openAccess()) redirect(ROUTES.verifyEmail)
 
-  const parsed = moduleSchema.safeParse(formData.get('module'))
+  const parsed = moduleSchema.safeParse({
+    module: formData.get('module'),
+    timezone: formData.get('timezone') || undefined,
+  })
+
   if (!parsed.success) {
     // Section 3: Self (MOTiF) is admin-assigned and never offered in public
     // signup, so it is not in the schema and a crafted POST cannot pick it.
-    return { error: 'Choose Personal or Business to continue.' }
+    return { error: 'Choose Solo or Team to continue.' }
   }
 
   const supabase = await createClient()
   await supabase
     .from('users')
-    .update({ active_module: parsed.data })
+    .update({ active_module: parsed.data.module })
     .eq('id', user.id)
+
+  /**
+   * Solo goes straight to the dashboard.
+   *
+   * Section 3 gives Personal exactly one workspace and no team, which means
+   * every field on the setup form has a defensible default and none of them is
+   * a decision only the user can make: the workspace is theirs, it is named
+   * after them, and its zone is the one their browser is already in. Asking
+   * four screens of questions to arrive at answers we already hold is the
+   * cost this removes.
+   *
+   * Team keeps the full flow. A brand's name, voice and audience are the
+   * things the product is built around, and nothing can guess them.
+   */
+  if (parsed.data.module === 'personal') {
+    const result = await startSoloWorkspace(user.id, {
+      fullName: user.profile.full_name,
+      email: user.email,
+      timezone: parsed.data.timezone,
+    })
+
+    if (!result.ok) return { error: result.reason }
+
+    revalidatePath(ROUTES.dashboard)
+    redirect(ROUTES.dashboard)
+  }
 
   await advance(user.id, 'setup')
   redirect(ROUTES.onboarding.setup)
+}
+
+/**
+ * Everything the setup step would have written, for someone posting as
+ * themselves.
+ *
+ * Idempotent on the workspace: someone who already has one — a returning user
+ * changing their mind on this screen — keeps it rather than collecting a
+ * second, which Section 3 does not allow anyway.
+ */
+async function startSoloWorkspace(
+  userId: string,
+  person: { fullName: string | null; email: string; timezone?: string },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const supabase = await createClient()
+
+  const { data: existing } = await supabase
+    .from('users')
+    .select('active_workspace_id')
+    .eq('id', userId)
+    .maybeSingle<{ active_workspace_id: string | null }>()
+
+  let workspaceId = existing?.active_workspace_id ?? null
+
+  if (!workspaceId) {
+    const name = soloWorkspaceName(person.fullName, person.email)
+    const timezone =
+      person.timezone && isKnownTimezone(person.timezone) ? person.timezone : DEFAULT_TIMEZONE
+
+    const { data: created, error } = await supabase.rpc('create_workspace', {
+      p_name: name,
+      p_type: 'personal',
+      p_timezone: timezone,
+    })
+
+    // Logged, not just counted. The sentence the user sees has to be plain;
+    // the reason it happened has to be somewhere.
+    if (error || !created) {
+      console.error('[onboarding] solo workspace failed: %s', error?.message ?? 'no id')
+      return { ok: false, reason: 'Could not set up your space. Try again.' }
+    }
+
+    workspaceId = created
+
+    // Section 10: the planner reads this. Left mostly empty rather than
+    // invented — `completed_at` is null, so Settings can still tell the
+    // difference between "not filled in" and "filled in as nothing".
+    await supabase
+      .from('profiles_setup')
+      .upsert({ workspace_id: workspaceId, brand_name: name }, { onConflict: 'workspace_id' })
+  }
+
+  const { error: userError } = await supabase
+    .from('users')
+    .update({
+      active_workspace_id: workspaceId,
+      onboarding_step: 'done',
+      onboarding_completed_at: new Date().toISOString(),
+    })
+    .eq('id', userId)
+
+  if (userError) {
+    console.error('[onboarding] solo user update failed: %s', userError.message)
+    return { ok: false, reason: 'Could not finish setting you up. Try again.' }
+  }
+
+  return { ok: true }
+}
+
+/** "Asif's space", or the email's local part when there is no name. */
+function soloWorkspaceName(fullName: string | null, email: string): string {
+  const name = fullName?.trim() || email.split('@')[0]
+  return `${name}${name.endsWith('s') ? "'" : "'s"} space`
 }
 
 // --- Step 1: setup (Section 4, S1) ------------------------------------------
@@ -90,7 +215,7 @@ export async function completeSetupAction(
 ): Promise<FormState> {
   const user = await getSessionUser()
   if (!user) redirect(ROUTES.login)
-  if (!user.emailVerified) redirect(ROUTES.verifyEmail)
+  if (!user.emailVerified && !openAccess()) redirect(ROUTES.verifyEmail)
 
   const activeModule = user.profile.active_module
   if (!activeModule || !PUBLIC_MODULES.includes(activeModule)) {
@@ -130,28 +255,31 @@ export async function completeSetupAction(
       .eq('id', workspaceId)
     if (error) return { error: 'Could not save that. Try again.' }
   } else {
-    const { data: created, error } = await supabase
-      .from('workspaces')
-      .insert({
-        name: parsed.data.name,
-        type: activeModule,
-        owner_id: user.id,
-        timezone: parsed.data.timezone,
-      })
-      .select('id')
-      .single()
+    /**
+     * Through `create_workspace` (migration 0018), not a plain insert.
+     *
+     * The insert this replaces could never have worked from the browser:
+     * asking for the id back made Postgres apply the SELECT policy to the new
+     * row, and that policy wants a membership row which the *next* statement
+     * was going to create. Every workspace in the database had been made by
+     * the seed script with the service role, so nothing caught it.
+     *
+     * The function also makes the pair atomic. The old sequence could leave a
+     * workspace with no members — owned by nobody, visible to nobody, and
+     * deletable through no policy.
+     */
+    const { data: created, error } = await supabase.rpc('create_workspace', {
+      p_name: parsed.data.name,
+      p_type: activeModule,
+      p_timezone: parsed.data.timezone,
+    })
 
-    if (error || !created) return { error: 'Could not create the workspace. Try again.' }
-    workspaceId = created.id
+    if (error || !created) {
+      console.error('[onboarding] workspace failed: %s', error?.message ?? 'no id')
+      return { error: 'Could not create the workspace. Try again.' }
+    }
 
-    // The creator is its owner. Without this row the RLS helpers see no
-    // membership and the workspace would be invisible to the person who just
-    // made it.
-    const { error: memberError } = await supabase
-      .from('workspace_members')
-      .insert({ workspace_id: workspaceId, user_id: user.id, role: 'owner' })
-
-    if (memberError) return { error: 'Could not set you as the owner. Try again.' }
+    workspaceId = created
 
     await supabase
       .from('users')
@@ -266,8 +394,11 @@ export async function payLaterAction(): Promise<void> {
   if (!workspaceId) redirect(ROUTES.onboarding.setup)
 
   // Belt and braces: reaching 'done' means the router gate will let this user
-  // at the dashboard, so the no-skip rule is re-checked here too.
-  if (!(await hasActiveConnection(workspaceId))) {
+  // at the dashboard, so the no-skip rule is re-checked here too. Relaxed
+  // under OPEN_ACCESS for the same reason the gate itself is — with no
+  // platform credentials configured, this step cannot be satisfied at all, and
+  // it would hold every new account on the connect screen forever.
+  if (!openAccess() && !(await hasActiveConnection(workspaceId))) {
     redirect(ROUTES.onboarding.connect)
   }
 

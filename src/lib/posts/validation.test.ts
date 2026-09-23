@@ -143,7 +143,30 @@ test('a platform listed twice is only checked once', () => {
   assert.equal(issues.length, 1)
 })
 
-test('a platform with no adapter yet reports nothing', () => {
-  // Nothing can publish there, so there is nothing to validate against.
-  assert.deepEqual(validateForPlatform('tiktok', { caption: '', media: [] }), [])
+test('the video-only platforms refuse a post with nothing attached', () => {
+  // Neither TikTok nor YouTube has a text post. Catching it in the composer is
+  // the difference between a correction now and a failure at 9am.
+  for (const platform of ['tiktok', 'youtube'] as const) {
+    const issues = validateForPlatform(platform, { caption: 'A caption', media: [] })
+    assert.equal(issues.length, 1, platform)
+    assert.equal(issues[0].field, 'media', platform)
+    assert.equal(issues[0].severity, 'error', platform)
+  }
+})
+
+test('the video-only platforms refuse a still image', () => {
+  const issues = validateForPlatform('tiktok', {
+    caption: 'A caption',
+    media: [{ id: 'm1', mimeType: 'image/jpeg', width: 1080, height: 1080 }],
+  })
+  assert.ok(
+    issues.some((issue) => issue.field === 'media' && issue.severity === 'error'),
+    'an image should not satisfy a platform that only takes video',
+  )
+})
+
+test("X's caption limit is the one almost everybody has", () => {
+  const issues = validateForPlatform('twitter', { caption: 'a'.repeat(281), media: [] })
+  assert.ok(issues.some((issue) => issue.field === 'caption'))
+  assert.deepEqual(validateForPlatform('twitter', { caption: 'a'.repeat(280), media: [] }), [])
 })

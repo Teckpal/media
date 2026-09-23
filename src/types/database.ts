@@ -141,6 +141,8 @@ export type SocialAccountRow = {
   avatar_url: string | null
   account_type: string | null
   parent_external_id: string | null
+  /** The platform's id for whoever connected this. See migration 0015. */
+  connected_external_user_id: string | null
   token_expires_at: string | null
   scopes: string[] | null
   status: ConnectionStatusEnum
@@ -499,6 +501,17 @@ export type AuditLogRow = {
 
 // --- the Database type supabase-js is generic over ---------------------------
 
+export type DataDeletionRequestRow = {
+  id: string
+  platform: PlatformEnum
+  external_user_id: string
+  confirmation_code: string
+  accounts_removed: number
+  completed_at: string | null
+  nothing_to_remove: boolean
+  created_at: string
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -555,6 +568,10 @@ export type Database = {
       notification_preferences: Table<NotificationPreferenceRow, 'user_id'>
       whatsapp_links: Table<WhatsappLinkRow, 'user_id' | 'phone_e164'>
       audit_log: Table<AuditLogRow, 'action'>
+      data_deletion_requests: Table<
+        DataDeletionRequestRow,
+        'platform' | 'external_user_id' | 'confirmation_code'
+      >
       oauth_sessions: Table<
         OAuthSessionRow,
         'user_id' | 'workspace_id' | 'platform' | 'access_token_encrypted' | 'expires_at'
@@ -576,6 +593,8 @@ export type Database = {
       }
       roll_up_post: { Args: { p: string }; Returns: PostStatusEnum }
       reap_stuck_targets: { Args: { max_attempts?: number }; Returns: number }
+      /** Migration 0016: pauses scheduled posts with no target left to send them. */
+      reap_stranded_posts: { Args: Record<string, never>; Returns: number }
       publishing_coverage: {
         Args: { ws: string }
         Returns: {
@@ -605,6 +624,11 @@ export type Database = {
       }
       expire_lapsed_ai_grants: { Args: Record<never, never>; Returns: number }
       unread_notification_count: { Args: { ws: string }; Returns: number }
+      /** Migration 0018. Creates the workspace and its owner row atomically. */
+      create_workspace: {
+        Args: { p_name: string; p_type: ModuleTypeEnum; p_timezone: string }
+        Returns: string
+      }
       claim_notification_deliveries: {
         Args: { max_batch?: number; max_attempts?: number }
         Returns: NotificationDeliveryRow[]

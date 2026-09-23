@@ -12,6 +12,15 @@ import { decryptToken } from '@/lib/crypto/tokens'
 import { ROUTES } from '@/lib/routes'
 import type { FormState } from '@/lib/forms'
 import type { WorkspaceRoleEnum } from '@/types/database'
+import { openAccess } from '@/lib/billing/open-access'
+import { recordAudit } from '@/lib/audit/record'
+import { PLATFORMS, PLATFORM_LABELS } from '@/lib/constants'
+import {
+  DEMO_ACCOUNT_TYPE,
+  demoDisplayName,
+  demoExternalId,
+  demoUsername,
+} from '@/lib/connections/demo'
 
 /**
  * Connections are an admin action (Section 6.3): an editor writes posts, an
@@ -156,6 +165,71 @@ export async function connectSelectedAction(
 }
 
 // --- disconnect ---------------------------------------------------------------
+
+/**
+ * Connects a demo account, so the rest of the product can be seen.
+ *
+ * See `lib/connections/demo.ts` for what one is and why it holds no token.
+ * The two guards here are the whole of its security: admin only, and only
+ * while `OPEN_ACCESS` is on. With the flag off this refuses regardless of what
+ * the page renders.
+ */
+export async function connectDemoAccountAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const { userId, workspaceId } = await requireAdmin()
+
+  if (!openAccess()) {
+    return { error: 'Demo accounts are only available while the app is open for testing.' }
+  }
+
+  const platform = z.enum(PLATFORMS).safeParse(formData.get('platform'))
+  if (!platform.success) return { error: 'Unknown platform.' }
+
+  const admin = createAdminClient()
+
+  const { error } = await admin.from('social_accounts').insert({
+    workspace_id: workspaceId,
+    platform: platform.data,
+    external_account_id: demoExternalId(platform.data, workspaceId),
+    external_username: demoUsername(platform.data),
+    display_name: demoDisplayName(platform.data),
+    account_type: DEMO_ACCOUNT_TYPE,
+    status: 'active',
+    // Section 7.1 bills per connected account. A prop must not be billable, and
+    // marking the seat paid keeps it out of the publish gate's unpaid branch —
+    // which would otherwise blame the plan for something that is not about the
+    // plan. The worker refuses it for the real reason instead.
+    paid_seat: true,
+    // No token. Deliberately. See `demo.ts`.
+    access_token_encrypted: null,
+  })
+
+  if (error) {
+    // The partial unique index (migration 0003) is what stops a second one.
+    if (error.code === '23505') {
+      return { error: `A demo ${PLATFORM_LABELS[platform.data]} account is already connected.` }
+    }
+    console.error('[connections] demo account failed: %s', error.message)
+    return { error: 'Could not add that demo account. Try again.' }
+  }
+
+  await recordAudit({
+    workspaceId,
+    actorId: userId,
+    action: 'connection.demo_added',
+    entityType: 'social_account',
+    entityId: demoExternalId(platform.data, workspaceId),
+    detail: { platform: platform.data },
+  })
+
+  revalidatePath(ROUTES.connections)
+  return {
+    error: null,
+    notice: `${PLATFORM_LABELS[platform.data]} (demo) added. It can be previewed and scheduled against, but nothing will publish through it.`,
+  }
+}
 
 export async function disconnectAccountAction(
   _prev: FormState,

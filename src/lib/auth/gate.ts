@@ -3,6 +3,8 @@ import 'server-only'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { ONBOARDING_ROUTE, ROUTES } from '@/lib/routes'
+import { openAccess } from '@/lib/billing/open-access'
+import type { OnboardingStep } from '@/lib/constants'
 import {
   getActiveWorkspace,
   getSessionUser,
@@ -21,6 +23,28 @@ import {
  * render cannot be.
  */
 
+/**
+ * Where a user actually stands, once the verification bypass is accounted for.
+ *
+ * Every account starts on `verify_email`, and confirming the address is what
+ * moves it to `choose_module`. Bypass verification without this and the step
+ * never advances: the gate sends the user to `/verify-email`, which under
+ * OPEN_ACCESS sends them to `/dashboard`, whose gate reads the same unchanged
+ * step and sends them back. A loop, and the first thing a new account hits.
+ *
+ * MEASURED: a fresh signup landed on the choice screen, was bounced straight
+ * off it by `guardOnboardingStep`, and never recorded a module at all.
+ *
+ * So the stored step is read through here, in the one place both the gate and
+ * the page guard consult. Nothing is written — a user whose row still says
+ * `verify_email` is simply treated as being past it, and turning the flag off
+ * puts them back where they were with no migration to undo.
+ */
+export function effectiveStep(step: OnboardingStep): OnboardingStep {
+  if (step === 'verify_email' && openAccess()) return 'choose_module'
+  return step
+}
+
 export type GateVerdict =
   | { kind: 'signed_out'; redirectTo: string }
   | { kind: 'email_unverified'; redirectTo: string; user: SessionUser }
@@ -35,11 +59,19 @@ export async function evaluateGate(): Promise<GateVerdict> {
   }
 
   // Section 5, rule 2: email is verified before OAuth, so this comes first.
-  if (!user.emailVerified) {
+  //
+  // Bypassed under OPEN_ACCESS, and this is the one relaxation there that is
+  // genuinely about identity rather than commerce — so it is worth being
+  // plain about. Supabase's built-in mailer caps at a couple of messages an
+  // hour, which is not a working signup flow, and no SMTP provider is
+  // configured yet. Until one is, requiring verification means nobody can
+  // sign up at all. Re-enabled by removing OPEN_ACCESS, which is also when
+  // real mail will exist to verify against.
+  if (!user.emailVerified && !openAccess()) {
     return { kind: 'email_unverified', redirectTo: ROUTES.verifyEmail, user }
   }
 
-  const step = user.profile.onboarding_step
+  const step = effectiveStep(user.profile.onboarding_step)
   if (step !== 'done') {
     // Section 5, rule 1: resume exactly where they left.
     return { kind: 'onboarding_incomplete', redirectTo: ONBOARDING_ROUTE[step], user }
@@ -58,7 +90,13 @@ export async function evaluateGate(): Promise<GateVerdict> {
     }
   }
 
-  if (!(await hasActiveConnection(active.workspace.id))) {
+  // Under OPEN_ACCESS the dashboard is reachable before anything is connected.
+  // The check exists because a workspace with no live account cannot publish,
+  // which is true either way — but with no platform credentials configured yet
+  // there is no way to satisfy it, and a product nobody can get into is not a
+  // product being tested. The rest of the gate is untouched: this relaxes what
+  // the workspace can do, never who the visitor is.
+  if (!openAccess() && !(await hasActiveConnection(active.workspace.id))) {
     // Section 6.1: a revoked or expired connection drops the workspace here.
     // Drafts and data are kept; only the way forward is blocked.
     return { kind: 'no_active_connection', redirectTo: ROUTES.reconnect, user }
@@ -142,7 +180,10 @@ export async function requireWorkspace(): Promise<{
 export async function requireVerifiedUser(): Promise<SessionUser> {
   const user = await getSessionUser()
   if (!user) redirect(ROUTES.login)
-  if (!user.emailVerified) redirect(ROUTES.verifyEmail)
+  // Same bypass as `evaluateGate`, for the same reason, and deliberately in
+  // both places rather than one calling the other — this is the check every
+  // onboarding page makes, and the two must not be able to disagree.
+  if (!user.emailVerified && !openAccess()) redirect(ROUTES.verifyEmail)
   return user
 }
 
@@ -158,7 +199,7 @@ export function guardOnboardingStep(
   page: keyof typeof ONBOARDING_ROUTE,
   order: readonly (keyof typeof ONBOARDING_ROUTE)[],
 ): void {
-  const current = user.profile.onboarding_step
+  const current = effectiveStep(user.profile.onboarding_step)
   if (current === 'done') return
 
   if (order.indexOf(page) > order.indexOf(current)) {

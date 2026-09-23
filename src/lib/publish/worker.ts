@@ -12,6 +12,7 @@ import {
   abandonTarget,
   claimDueTargets,
   notifyOutcome,
+  reapStrandedPosts,
   reapStuckTargets,
   recordFailure,
   recordPublished,
@@ -19,6 +20,7 @@ import {
   type ClaimedTarget,
 } from '@/lib/publish/queue'
 import type { Platform } from '@/lib/constants'
+import { DEMO_PUBLISH_REFUSAL, isDemoAccount } from '@/lib/connections/demo'
 
 /**
  * Section 4's publish worker, and Section 9's "Queue: due posts (every minute)".
@@ -56,6 +58,8 @@ export type TickSummary = {
   failed: number
   retrying: number
   processing: number
+  /** Scheduled posts with no target left, paused by this tick. */
+  stranded: number
 
   /**
    * Queries this tick could not run at all. Empty is the healthy case; anything
@@ -75,8 +79,13 @@ export async function runPublishTick(
     failed: 0,
     retrying: 0,
     processing: 0,
+    stranded: 0,
     degraded: [],
   }
+
+  const stranded = await reapStrandedPosts()
+  if (stranded === null) summary.degraded.push('reap_stranded_posts')
+  else summary.stranded = stranded
 
   const reaped = await reapStuckTargets()
   if (reaped === null) summary.degraded.push('reap_stuck_targets')
@@ -146,11 +155,37 @@ async function publishTarget(target: ClaimedTarget): Promise<TargetOutcome> {
     .maybeSingle()
 
   if (!account) {
+    // No `notifyOutcome`: it needs the account's name and platform label, and
+    // neither exists any more. The post's own status carries it instead — the
+    // one case on this path where the team cannot be told which account was
+    // involved, because there is no longer a record of it.
     await abandonTarget(target, 'That account is no longer connected.')
     return 'failed'
   }
 
   const accountName = account.display_name ?? account.external_username ?? 'that account'
+
+  /**
+   * A demo account cannot publish, and says so as itself.
+   *
+   * Checked before the token, which is the point. A demo account has no token,
+   * so without this it would fall into the "we lost access, reconnect it"
+   * branch below — a true sentence about the wrong thing, which would also
+   * flip a working prop to `needs_reconnect` and put a reconnection notice on
+   * the bell for an account that was never connected.
+   */
+  if (isDemoAccount(account)) {
+    await abandonTarget(target, DEMO_PUBLISH_REFUSAL)
+    await notifyOutcome({
+      workspaceId: post.workspace_id,
+      postId: post.id,
+      platform: target.platform as Platform,
+      accountName,
+      published: false,
+      error: DEMO_PUBLISH_REFUSAL,
+    })
+    return 'failed'
+  }
 
   if (account.status !== 'active') {
     // Section 6.1: a connection that needs reconnecting cannot publish.
@@ -204,7 +239,16 @@ async function publishTarget(target: ClaimedTarget): Promise<TargetOutcome> {
 
   const adapter = adapterFor(target.platform as Platform)
   if (!adapter) {
-    await abandonTarget(target, 'That platform is not connected to publishing yet.')
+    const reason = 'That platform is not connected to publishing yet.'
+    await abandonTarget(target, reason)
+    await notifyOutcome({
+      workspaceId: post.workspace_id,
+      postId: post.id,
+      platform: target.platform as Platform,
+      accountName,
+      published: false,
+      error: reason,
+    })
     return 'failed'
   }
 
@@ -221,11 +265,25 @@ async function publishTarget(target: ClaimedTarget): Promise<TargetOutcome> {
     // The ciphertext will not open — a rotated key, or a row whose token was
     // written for a different account. There is nothing to publish with, and
     // the only cure is reconnecting.
+    const reason = `We lost access to ${accountName}. Reconnect it and schedule this again.`
+
     await handleLostAccess(post.workspace_id, account.id, 'token_unreadable')
-    await abandonTarget(
-      target,
-      `We lost access to ${accountName}. Reconnect it and schedule this again.`,
-    )
+    await abandonTarget(target, reason)
+
+    // This branch used to return here, and it was the gap. `handleLostAccess`
+    // writes "an account needs reconnecting", which is true and useful and
+    // says nothing about the post that just did not go out — so a scheduled
+    // post could fail and the only notice the workspace ever got was about the
+    // connection. MEASURED: a publish-now post failed exactly this way and
+    // produced one notification, about the account.
+    await notifyOutcome({
+      workspaceId: post.workspace_id,
+      postId: post.id,
+      platform: target.platform as Platform,
+      accountName,
+      published: false,
+      error: reason,
+    })
     return 'failed'
   }
 

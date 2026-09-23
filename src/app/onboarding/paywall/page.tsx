@@ -8,6 +8,7 @@ import { guardOnboardingStep, requireVerifiedUser } from '@/lib/auth/gate'
 import { STEP_ORDER } from '@/lib/onboarding/steps'
 import { createClient } from '@/lib/supabase/server'
 import { regionCanCheckout } from '@/lib/billing/gateways'
+import { openAccess } from '@/lib/billing/open-access'
 import { REGION_COOKIE, readRegionHint } from '@/lib/region'
 import { formatMoney } from '@/lib/money'
 import { ROUTES } from '@/lib/routes'
@@ -80,6 +81,7 @@ export default async function PaywallPage() {
   }))
 
   const canCheckout = regionCanCheckout(region)
+  const free = openAccess()
 
   return (
     <div className="space-y-6">
@@ -91,30 +93,47 @@ export default async function PaywallPage() {
         </p>
       </div>
 
-      <PlanPicker
-        plans={options}
-        seats={seats}
-        canPay={canCheckout}
-        unavailableReason={
-          canCheckout
-            ? null
-            : 'Card payments outside Bangladesh are not open yet. You can carry on without paying and we will set you up directly.'
-        }
-      />
+      {/* Under OPEN_ACCESS there is nothing to choose, and offering a plan
+          that would not be charged for is a worse lie than saying so. The
+          picker and the "you will be limited" notice are both replaced by the
+          truth, and "I will decide later" below becomes the way through. */}
+      {free ? (
+        <Alert title="Everything is open while we are in testing">
+          No plan is needed yet. Scheduling, publishing and the whole team are
+          available to you now — carry on below, and pricing will arrive before
+          anything is ever charged.
+        </Alert>
+      ) : (
+        <>
+          <PlanPicker
+            plans={options}
+            seats={seats}
+            canPay={canCheckout}
+            unavailableReason={
+              canCheckout
+                ? null
+                : 'Card payments outside Bangladesh are not open yet. You can carry on without paying and we will set you up directly.'
+            }
+          />
 
-      <Alert title="Not ready yet?">
-        You can go on without paying. You will be able to edit your setup, manage
-        connections, write drafts and look at your calendar — but scheduling,
-        publishing and inviting teammates stay locked until a plan is active.
-      </Alert>
+          <Alert title="Not ready yet?">
+            You can go on without paying. You will be able to edit your setup,
+            manage connections, write drafts and look at your calendar — but
+            scheduling, publishing and inviting teammates stay locked until a
+            plan is active.
+          </Alert>
+        </>
+      )}
 
-      <PayLaterButton />
+      <PayLaterButton label={free ? 'Continue to your dashboard' : undefined} />
 
-      <p className="text-xs text-muted-foreground">
-        {region === 'bd'
-          ? 'Prices in BDT, paid through SSLCommerz. Bangladeshi cards and mobile wallets.'
-          : 'Prices in USD. Your region is confirmed by the payment method you use.'}
-      </p>
+      {free ? null : (
+        <p className="text-xs text-muted-foreground">
+          {region === 'bd'
+            ? 'Prices in BDT, paid through SSLCommerz. Bangladeshi cards and mobile wallets.'
+            : 'Prices in USD. Your region is confirmed by the payment method you use.'}
+        </p>
+      )}
     </div>
   )
 }

@@ -56,6 +56,16 @@ export type DiscoveredAccount = {
   /** An Instagram business account hangs off a Facebook Page; this is the Page. */
   parentExternalId?: string
 
+  /**
+   * The platform's id for the PERSON who connected this, where it issues one.
+   *
+   * Not the account's own id: one person connects many Pages, and a
+   * provider-initiated deletion request names the person. Meta's is app-scoped
+   * — stable here, meaningless anywhere else. Absent on platforms that issue
+   * nothing comparable.
+   */
+  connectedExternalUserId?: string
+
   accessToken: string
   refreshToken?: string
   expiresAt?: Date
@@ -66,6 +76,13 @@ export type AuthUrlOptions = {
   redirectUri: string
   /** Opaque nonce; the adapter round-trips it and never interprets it. */
   state: string
+  /**
+   * The S256 hash of a verifier the route has already stored in the state
+   * cookie. Present only for adapters that set `usesPkce`; the adapter passes
+   * it through and never generates it, so there is one PKCE implementation
+   * rather than one per platform.
+   */
+  codeChallenge?: string
 }
 
 export interface PlatformAdapter {
@@ -74,10 +91,22 @@ export interface PlatformAdapter {
   /** Scopes the integration needs. Used to explain a partial grant. */
   readonly requiredScopes: readonly string[]
 
+  /**
+   * The platform requires PKCE (X and TikTok do; Meta and LinkedIn do not).
+   * When true the route mints a verifier, keeps it in the encrypted state
+   * cookie, and hands the adapter the challenge on the way out and the
+   * verifier on the way back.
+   */
+  readonly usesPkce?: boolean
+
   buildAuthUrl(options: AuthUrlOptions): string
 
   /** Swaps the callback code for a token, long-lived where the platform offers one. */
-  exchangeCode(code: string, redirectUri: string): Promise<IssuedToken>
+  exchangeCode(
+    code: string,
+    redirectUri: string,
+    codeVerifier?: string,
+  ): Promise<IssuedToken>
 
   /**
    * What this token can actually post to.

@@ -5,6 +5,7 @@ import { decideAfterFailure, explainGivingUp, type FailureFacts } from '@/lib/pu
 import { MAX_PUBLISH_ATTEMPTS, PLATFORM_LABELS, type Platform } from '@/lib/constants'
 import { ROUTES } from '@/lib/routes'
 import type { PostTargetRow } from '@/types/database'
+import { announce } from '@/lib/notifications/announce'
 
 /**
  * Everything the publish worker does to the database.
@@ -38,6 +39,25 @@ export async function reapStuckTargets(): Promise<number | null> {
 
   if (error) {
     console.error('[publish] reap failed: %s', error.message)
+    return null
+  }
+
+  return data ?? 0
+}
+
+/**
+ * Pauses scheduled posts that have no target left to publish them.
+ *
+ * `reapStuckTargets` rescues a target nobody can claim; this rescues a POST
+ * with no target at all — cancelled by a disconnect that then failed to pause
+ * it. Nothing else would ever move it, so it would sit in the calendar looking
+ * scheduled for ever. `null` means the query did not run.
+ */
+export async function reapStrandedPosts(): Promise<number | null> {
+  const { data, error } = await createAdminClient().rpc('reap_stranded_posts')
+
+  if (error) {
+    console.error('[publish] stranded sweep failed: %s', error.message)
     return null
   }
 
@@ -243,22 +263,27 @@ export async function notifyOutcome(params: {
 }): Promise<void> {
   const label = PLATFORM_LABELS[params.platform]
 
-  await createAdminClient()
-    .from('notifications')
-    .insert({
-      workspace_id: params.workspaceId,
-      user_id: null,
-      kind: params.published ? 'post_published' : 'post_failed',
-      title: params.published
-        ? `Published to ${label}`
-        : `A post did not go out on ${label}`,
-      body: params.published
-        ? `Your post is live on ${params.accountName}.`
-        : params.error ?? `We could not publish to ${params.accountName}.`,
-      link_path: `${ROUTES.posts}/${params.postId}`,
-      data: {
-        post_id: params.postId,
-        platform: params.platform,
-      },
-    })
+  // Through `announce`, which binds and logs the insert error.
+  //
+  // This used to insert directly with the error discarded, and a failed post
+  // produced no notification at all — verified live: a publish that failed on
+  // a revoked token wrote `needs_reconnect` and nothing else, so the team was
+  // told the account was broken and never told which post had not gone out.
+  // A gap in the one notification the module exists to send.
+  //
+  // `actorId: null`: the queue is not a person. Nobody clicked, so nobody is
+  // excluded from the toast — everyone should hear this one.
+  await announce({
+    workspaceId: params.workspaceId,
+    actorId: null,
+    kind: params.published ? 'post_published' : 'post_failed',
+    title: params.published
+      ? `Published to ${label}`
+      : `A post did not go out on ${label}`,
+    body: params.published
+      ? `Your post is live on ${params.accountName}.`
+      : (params.error ?? `We could not publish to ${params.accountName}.`),
+    linkPath: `${ROUTES.posts}/${params.postId}`,
+    detail: { post_id: params.postId, platform: params.platform },
+  })
 }

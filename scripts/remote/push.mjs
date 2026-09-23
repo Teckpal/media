@@ -69,14 +69,34 @@ if (wipe) {
   console.log('\n  (no --wipe: applying on top of what is there)')
 }
 
+// Without --wipe the history is what says which migrations have already run.
+// Writing it but never reading it made a second push re-apply migration 0001
+// and fail on "type platform already exists" — the table was a record nobody
+// consulted.
+await client.query(`create schema if not exists supabase_migrations`)
+await client.query(`create table if not exists supabase_migrations.schema_migrations (
+  version text primary key, statements text[], name text)`)
+
+const { rows: history } = await client.query(
+  'select version from supabase_migrations.schema_migrations',
+)
+const applied = new Set(history.map((row) => row.version))
+
 console.log('')
 
 const files = fs.readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()
 let failed = false
+let skipped = 0
 
 for (const name of files) {
   const sql = fs.readFileSync(path.join(MIGRATIONS, name), 'utf8')
   const version = name.split('_')[0]
+
+  if (applied.has(version)) {
+    skipped += 1
+    continue
+  }
+
   try {
     await client.query(sql)
     await client.query(
@@ -97,6 +117,9 @@ for (const name of files) {
     break
   }
 }
+
+if (skipped > 0) console.log(`
+  ${skipped} already applied, skipped`)
 
 await client.end()
 process.exit(failed ? 1 : 0)
